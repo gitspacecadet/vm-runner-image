@@ -54,11 +54,16 @@ concurrency:
 env:
   PACKER_VERSION: '1.10.0'
   IMAGE_OS: 'win22'
+  TEMPLATE_PATH: 'images/windows/templates'
+  BUILD_TEMPLATE: 'build.windows-2022-algo.pkr.hcl'
 
 jobs:
+  # ============================================================================
+  # Job 1: Build Managed Image with Packer
+  # ============================================================================
   build-image:
     name: Build Managed Image
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 180  # 3 hours max for Windows image build
     outputs:
       image_name: ${{ steps.names.outputs.image_name }}
@@ -69,26 +74,31 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup Packer
-        uses: hashicorp/setup-packer@v3
+        uses: hashicorp/setup-packer@main
         with:
-          version: ${{ env.PACKER_VERSION }}
+          version: latest
 
       - name: Generate image names
         id: names
+        shell: pwsh
         run: |
-          IMAGE_NAME="algo-runner-win22-$(date +%Y%m%d.%H%M)"
-          IMAGE_VERSION="1.$(date +%Y%m%d).$(date +%H%M)"
-          echo "image_name=$IMAGE_NAME" >> $GITHUB_OUTPUT
-          echo "image_version=$IMAGE_VERSION" >> $GITHUB_OUTPUT
-          echo "::notice::Image name: $IMAGE_NAME, Version: $IMAGE_VERSION"
+          $ImageName = "algo-runner-win22-$(Get-Date -Format 'yyyyMMdd.HHmm')"
+          $ImageVersion = "1.$(Get-Date -Format 'yyyyMMdd.HHmm')"
+          "image_name=$ImageName" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "image_version=$ImageVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "::notice::Image name: $ImageName, Version: $ImageVersion"
 
       - name: Generate install password
         id: password
+        shell: pwsh
         run: |
           # Generate a secure random password
-          PASSWORD=$(openssl rand -base64 32 | tr -d '/+=' | head -c 24)
-          echo "::add-mask::$PASSWORD"
-          echo "password=${PASSWORD}Aa1!" >> $GITHUB_OUTPUT
+          $bytes = New-Object byte[] 24
+          [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+          $password = [Convert]::ToBase64String($bytes) -replace '[/+=]',''
+          $password = $password.Substring(0, [Math]::Min(24, $password.Length)) + "Aa1!"
+          Write-Host "::add-mask::$password"
+          "password=$password" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       - name: Azure Login
         uses: azure/login@v2
@@ -96,38 +106,17 @@ jobs:
           creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
 
       - name: Packer Init
-        working-directory: images/windows/templates
-        run: packer init .
-
-      - name: Packer Validate
-        working-directory: images/windows/templates
-        env:
-          PKR_VAR_client_id: ${{ secrets.AZURE_CLIENT_ID }}
-          PKR_VAR_client_secret: ${{ secrets.AZURE_CLIENT_SECRET }}
-          PKR_VAR_tenant_id: ${{ secrets.AZURE_TENANT_ID }}
-          PKR_VAR_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          PKR_VAR_managed_image_resource_group_name: ${{ vars.AZURE_RESOURCE_GROUP }}
-          PKR_VAR_location: ${{ vars.AZURE_LOCATION }}
-          PKR_VAR_managed_image_name: ${{ steps.names.outputs.image_name }}
-          PKR_VAR_image_os: ${{ env.IMAGE_OS }}
-          PKR_VAR_install_password: ${{ steps.password.outputs.password }}
-          PKR_VAR_gallery_name: ${{ vars.AZURE_GALLERY_NAME }}
-          PKR_VAR_gallery_resource_group_name: ${{ vars.AZURE_RESOURCE_GROUP }}
-          PKR_VAR_gallery_image_name: ${{ vars.AZURE_GALLERY_IMAGE_NAME }}
-          PKR_VAR_gallery_image_version: ${{ steps.names.outputs.image_version }}
-          PKR_VAR_gallery_storage_account_type: ${{ vars.GALLERY_STORAGE_ACCOUNT_TYPE }}
-          PKR_VAR_bc_country: ${{ inputs.bc_country }}
-          PKR_VAR_bc_type: ${{ inputs.bc_type }}
-          PKR_VAR_bc_select: ${{ inputs.bc_select }}
-          PKR_VAR_bc_cache_skip: ${{ inputs.skip_bc_cache }}
+        shell: pwsh
+        working-directory: ${{ env.TEMPLATE_PATH }}
         run: |
-          # All .pkr.hcl files in this directory are auto-loaded by Packer
-          # Only specify the build template we want to run
-          packer validate -only="*.windows-2022-algo" .
+          Write-Host "Initializing Packer plugins..."
+          packer init .
+          if ($LASTEXITCODE -ne 0) { throw "Packer init failed" }
 
       - name: Build Managed Image
         id: build
-        working-directory: images/windows/templates
+        shell: pwsh
+        working-directory: ${{ env.TEMPLATE_PATH }}
         env:
           PKR_VAR_client_id: ${{ secrets.AZURE_CLIENT_ID }}
           PKR_VAR_client_secret: ${{ secrets.AZURE_CLIENT_SECRET }}
@@ -148,13 +137,24 @@ jobs:
           PKR_VAR_bc_select: ${{ inputs.bc_select }}
           PKR_VAR_bc_cache_skip: ${{ inputs.skip_bc_cache }}
         run: |
-          # All .pkr.hcl files in this directory are auto-loaded by Packer
-          # Only specify the build template we want to run
-          packer build \
-            -only="*.windows-2022-algo" \
-            -color=false \
-            -on-error=abort \
+          Write-Host "Building AL-Go runner image..."
+          Write-Host "   -> Image Name: ${{ steps.names.outputs.image_name }}"
+          Write-Host "   -> Image Version: ${{ steps.names.outputs.image_version }}"
+          Write-Host "   -> BC Type: ${{ inputs.bc_type }}"
+          Write-Host "   -> BC Country: ${{ inputs.bc_country }}"
+
+          packer build `
+            -only="*.windows-2022-algo" `
+            -color=false `
+            -on-error=abort `
             .
+
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Packer build failed"
+            exit 1
+          }
+
+          Write-Host "Build completed successfully!"
 
       - name: Upload software report
         if: always()
@@ -167,10 +167,13 @@ jobs:
           retention-days: 90
           if-no-files-found: warn
 
+  # ============================================================================
+  # Job 2: Verify Gallery Image
+  # ============================================================================
   verify-gallery:
     name: Verify Gallery Image
     needs: build-image
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 10
     if: success()
 
@@ -181,31 +184,37 @@ jobs:
           creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
 
       - name: Verify gallery image version
+        shell: pwsh
         run: |
-          echo "::group::Checking gallery image version"
-          az sig image-version show \
-            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
-            --gallery-name "${{ vars.AZURE_GALLERY_NAME }}" \
-            --gallery-image-definition "${{ vars.AZURE_GALLERY_IMAGE_NAME }}" \
-            --gallery-image-version "${{ needs.build-image.outputs.image_version }}" \
-            -o table
-          echo "::endgroup::"
+          Write-Host "Verifying image creation in Azure Compute Gallery..."
+          az sig image-version show `
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" `
+            --gallery-name "${{ vars.AZURE_GALLERY_NAME }}" `
+            --gallery-image-definition "${{ vars.AZURE_GALLERY_IMAGE_NAME }}" `
+            --gallery-image-version "${{ needs.build-image.outputs.image_version }}" `
+            --query "{id:id, provisioningState:provisioningState, publishingProfile:publishingProfile}" `
+            --output table
+
+          Write-Host "Image verified in gallery!"
 
       - name: List recent versions
+        shell: pwsh
         run: |
-          echo "::group::Recent gallery versions"
-          az sig image-version list \
-            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
-            --gallery-name "${{ vars.AZURE_GALLERY_NAME }}" \
-            --gallery-image-definition "${{ vars.AZURE_GALLERY_IMAGE_NAME }}" \
-            --query "[].{Version:name, Created:publishingProfile.publishedDate, State:provisioningState}" \
-            -o table
-          echo "::endgroup::"
+          Write-Host "Recent gallery versions:"
+          az sig image-version list `
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" `
+            --gallery-name "${{ vars.AZURE_GALLERY_NAME }}" `
+            --gallery-image-definition "${{ vars.AZURE_GALLERY_IMAGE_NAME }}" `
+            --query "[].{Version:name, Created:publishingProfile.publishedDate, State:provisioningState}" `
+            --output table
 
+  # ============================================================================
+  # Job 3: Create GitHub Release
+  # ============================================================================
   create-release:
     name: Create GitHub Release
     needs: [build-image, verify-gallery]
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     if: success()
     permissions:
       contents: write
@@ -219,12 +228,13 @@ jobs:
         with:
           name: software-report
           path: ./artifacts
+        continue-on-error: true
 
       - name: Create Release
-        uses: softprops/action-gh-release@v2
+        uses: ncipollo/release-action@v1
         with:
-          tag_name: v${{ needs.build-image.outputs.image_version }}
-          name: AL-Go Runner Image v${{ needs.build-image.outputs.image_version }}
+          tag: "v${{ needs.build-image.outputs.image_version }}"
+          name: "AL-Go Runner Image v${{ needs.build-image.outputs.image_version }}"
           body: |
             ## AL-Go Runner Image Release
 
@@ -251,14 +261,23 @@ jobs:
             ### Usage
             Deploy from Azure Compute Gallery:
             ```
-            /subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/${{ vars.AZURE_RESOURCE_GROUP }}/providers/Microsoft.Compute/galleries/${{ vars.AZURE_GALLERY_NAME }}/images/${{ vars.AZURE_GALLERY_IMAGE_NAME }}/versions/${{ needs.build-image.outputs.image_version }}
+            ${{ vars.AZURE_GALLERY_NAME }}/${{ vars.AZURE_GALLERY_IMAGE_NAME }}/${{ needs.build-image.outputs.image_version }}
             ```
 
             ### Performance
             - BC container startup: < 2 minutes (vs 30-45 min on GitHub-hosted runners)
             - Image size: ~35-40GB (vs 100GB+ full runner-images)
-          files: |
-            artifacts/Windows2022-ALGo-Readme.md
-            artifacts/software-report-algo.json
           draft: false
           prerelease: false
+
+      - name: Output Summary
+        shell: pwsh
+        run: |
+          "## Image Build Complete!" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "| Property | Value |" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "|----------|-------|" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "| **Image Name** | ${{ needs.build-image.outputs.image_name }} |" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "| **Image Version** | ${{ needs.build-image.outputs.image_version }} |" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "| **Gallery** | ${{ vars.AZURE_GALLERY_NAME }} |" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "| **Resource Group** | ${{ vars.AZURE_RESOURCE_GROUP }} |" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append

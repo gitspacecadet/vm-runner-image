@@ -1,0 +1,264 @@
+################################################################################
+# Build AL-Go Runner Image
+#
+# Creates a minimal Windows 2022 image optimized for Business Central AL-Go
+# workflows with pre-cached BC containers and artifacts.
+#
+# Target: ~35-40GB (vs 100GB+ full runner-images)
+# BC container startup: <2 min (vs 30-45 min)
+################################################################################
+
+name: Build AL-Go Runner Image
+
+on:
+  workflow_dispatch:
+    inputs:
+      skip_bc_cache:
+        description: 'Skip BC caching (faster builds for testing)'
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+      bc_type:
+        description: 'BC artifact type'
+        default: 'Sandbox'
+        type: choice
+        options:
+          - Sandbox
+          - OnPrem
+      bc_country:
+        description: 'BC country code'
+        default: 'us'
+        type: string
+      bc_select:
+        description: 'BC version selection'
+        default: 'Latest'
+        type: choice
+        options:
+          - Latest
+          - Current
+          - Daily
+          - NextMajor
+          - NextMinor
+
+# Minimal global permissions
+permissions:
+  contents: read
+
+# Prevent duplicate runs
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PACKER_VERSION: '1.10.0'
+  IMAGE_OS: 'win22'
+
+jobs:
+  build-image:
+    name: Build Managed Image
+    runs-on: ubuntu-latest
+    timeout-minutes: 180  # 3 hours max for Windows image build
+    outputs:
+      image_name: ${{ steps.names.outputs.image_name }}
+      image_version: ${{ steps.names.outputs.image_version }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Packer
+        uses: hashicorp/setup-packer@v3
+        with:
+          version: ${{ env.PACKER_VERSION }}
+
+      - name: Generate image names
+        id: names
+        run: |
+          IMAGE_NAME="algo-runner-win22-$(date +%Y%m%d.%H%M)"
+          IMAGE_VERSION="1.$(date +%Y%m%d).$(date +%H%M)"
+          echo "image_name=$IMAGE_NAME" >> $GITHUB_OUTPUT
+          echo "image_version=$IMAGE_VERSION" >> $GITHUB_OUTPUT
+          echo "::notice::Image name: $IMAGE_NAME, Version: $IMAGE_VERSION"
+
+      - name: Generate install password
+        id: password
+        run: |
+          # Generate a secure random password
+          PASSWORD=$(openssl rand -base64 32 | tr -d '/+=' | head -c 24)
+          echo "::add-mask::$PASSWORD"
+          echo "password=${PASSWORD}Aa1!" >> $GITHUB_OUTPUT
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
+
+      - name: Packer Init
+        working-directory: images/windows/templates
+        run: packer init .
+
+      - name: Packer Validate
+        working-directory: images/windows/templates
+        env:
+          PKR_VAR_client_id: ${{ secrets.AZURE_CLIENT_ID }}
+          PKR_VAR_client_secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          PKR_VAR_tenant_id: ${{ secrets.AZURE_TENANT_ID }}
+          PKR_VAR_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          PKR_VAR_managed_image_resource_group_name: ${{ vars.AZURE_RESOURCE_GROUP }}
+          PKR_VAR_location: ${{ vars.AZURE_LOCATION }}
+          PKR_VAR_managed_image_name: ${{ steps.names.outputs.image_name }}
+          PKR_VAR_image_os: ${{ env.IMAGE_OS }}
+          PKR_VAR_install_password: ${{ steps.password.outputs.password }}
+          PKR_VAR_gallery_name: ${{ vars.AZURE_GALLERY_NAME }}
+          PKR_VAR_gallery_resource_group_name: ${{ vars.AZURE_RESOURCE_GROUP }}
+          PKR_VAR_gallery_image_name: ${{ vars.AZURE_GALLERY_IMAGE_NAME }}
+          PKR_VAR_gallery_image_version: ${{ steps.names.outputs.image_version }}
+          PKR_VAR_gallery_storage_account_type: ${{ vars.GALLERY_STORAGE_ACCOUNT_TYPE }}
+          PKR_VAR_bc_country: ${{ inputs.bc_country }}
+          PKR_VAR_bc_type: ${{ inputs.bc_type }}
+          PKR_VAR_bc_select: ${{ inputs.bc_select }}
+          PKR_VAR_bc_cache_skip: ${{ inputs.skip_bc_cache }}
+        run: |
+          packer validate \
+            -var-file=variable.windows.pkr.hcl \
+            -var-file=variable.windows-algo.pkr.hcl \
+            build.windows-2022-algo.pkr.hcl
+
+      - name: Build Managed Image
+        id: build
+        working-directory: images/windows/templates
+        env:
+          PKR_VAR_client_id: ${{ secrets.AZURE_CLIENT_ID }}
+          PKR_VAR_client_secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          PKR_VAR_tenant_id: ${{ secrets.AZURE_TENANT_ID }}
+          PKR_VAR_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          PKR_VAR_managed_image_resource_group_name: ${{ vars.AZURE_RESOURCE_GROUP }}
+          PKR_VAR_location: ${{ vars.AZURE_LOCATION }}
+          PKR_VAR_managed_image_name: ${{ steps.names.outputs.image_name }}
+          PKR_VAR_image_os: ${{ env.IMAGE_OS }}
+          PKR_VAR_install_password: ${{ steps.password.outputs.password }}
+          PKR_VAR_gallery_name: ${{ vars.AZURE_GALLERY_NAME }}
+          PKR_VAR_gallery_resource_group_name: ${{ vars.AZURE_RESOURCE_GROUP }}
+          PKR_VAR_gallery_image_name: ${{ vars.AZURE_GALLERY_IMAGE_NAME }}
+          PKR_VAR_gallery_image_version: ${{ steps.names.outputs.image_version }}
+          PKR_VAR_gallery_storage_account_type: ${{ vars.GALLERY_STORAGE_ACCOUNT_TYPE }}
+          PKR_VAR_bc_country: ${{ inputs.bc_country }}
+          PKR_VAR_bc_type: ${{ inputs.bc_type }}
+          PKR_VAR_bc_select: ${{ inputs.bc_select }}
+          PKR_VAR_bc_cache_skip: ${{ inputs.skip_bc_cache }}
+        run: |
+          packer build \
+            -var-file=variable.windows.pkr.hcl \
+            -var-file=variable.windows-algo.pkr.hcl \
+            -color=false \
+            -on-error=abort \
+            build.windows-2022-algo.pkr.hcl
+
+      - name: Upload software report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: software-report
+          path: |
+            images/windows/Windows2022-ALGo-Readme.md
+            images/windows/software-report-algo.json
+          retention-days: 90
+          if-no-files-found: warn
+
+  verify-gallery:
+    name: Verify Gallery Image
+    needs: build-image
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: success()
+
+    steps:
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
+
+      - name: Verify gallery image version
+        run: |
+          echo "::group::Checking gallery image version"
+          az sig image-version show \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --gallery-name "${{ vars.AZURE_GALLERY_NAME }}" \
+            --gallery-image-definition "${{ vars.AZURE_GALLERY_IMAGE_NAME }}" \
+            --gallery-image-version "${{ needs.build-image.outputs.image_version }}" \
+            -o table
+          echo "::endgroup::"
+
+      - name: List recent versions
+        run: |
+          echo "::group::Recent gallery versions"
+          az sig image-version list \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --gallery-name "${{ vars.AZURE_GALLERY_NAME }}" \
+            --gallery-image-definition "${{ vars.AZURE_GALLERY_IMAGE_NAME }}" \
+            --query "[].{Version:name, Created:publishingProfile.publishedDate, State:provisioningState}" \
+            -o table
+          echo "::endgroup::"
+
+  create-release:
+    name: Create GitHub Release
+    needs: [build-image, verify-gallery]
+    runs-on: ubuntu-latest
+    if: success()
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download software report
+        uses: actions/download-artifact@v4
+        with:
+          name: software-report
+          path: ./artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.build-image.outputs.image_version }}
+          name: AL-Go Runner Image v${{ needs.build-image.outputs.image_version }}
+          body: |
+            ## AL-Go Runner Image Release
+
+            **Image Version:** ${{ needs.build-image.outputs.image_version }}
+            **Image Name:** ${{ needs.build-image.outputs.image_name }}
+            **Gallery:** ${{ vars.AZURE_GALLERY_NAME }}
+            **Definition:** ${{ vars.AZURE_GALLERY_IMAGE_NAME }}
+
+            ### BC Configuration
+            - **Type:** ${{ inputs.bc_type }}
+            - **Country:** ${{ inputs.bc_country }}
+            - **Version:** ${{ inputs.bc_select }}
+            - **Cache Skipped:** ${{ inputs.skip_bc_cache }}
+
+            ### What's Included
+            - Windows Server 2022 Datacenter (Hyper-V Gen 1)
+            - Docker with Windows containers
+            - BcContainerHelper module
+            - Pre-cached BC artifacts and Docker image
+            - .NET 8.0 SDK
+            - Git, Azure CLI, PowerShell 7
+            - Node.js 20 LTS
+
+            ### Usage
+            Deploy from Azure Compute Gallery:
+            ```
+            /subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/${{ vars.AZURE_RESOURCE_GROUP }}/providers/Microsoft.Compute/galleries/${{ vars.AZURE_GALLERY_NAME }}/images/${{ vars.AZURE_GALLERY_IMAGE_NAME }}/versions/${{ needs.build-image.outputs.image_version }}
+            ```
+
+            ### Performance
+            - BC container startup: < 2 minutes (vs 30-45 min on GitHub-hosted runners)
+            - Image size: ~35-40GB (vs 100GB+ full runner-images)
+          files: |
+            artifacts/Windows2022-ALGo-Readme.md
+            artifacts/software-report-algo.json
+          draft: false
+          prerelease: false

@@ -1,0 +1,65 @@
+{
+    "toolcache": [
+        {
+            "name": "node",
+            "url" : "https://raw.githubusercontent.com/actions/node-versions/main/versions-manifest.json",
+            "arch": "x64",
+            "platform" : "win32",
+            "versions": [
+                "20.*"
+            ]
+        }
+    ],
+    "powershellModules": [
+        { "name": "DockerMsftProvider" },
+        { "name": "Pester" },
+        { "name": "PowerShellGet" },
+        { "name": "PSScriptAnalyzer" }
+    ],
+    "azureModules": [
+        {
+            "name": "az",
+            "versions": [
+                "12.5.0"
+            ],
+            "zip_versions": []
+        }
+    ],
+    "windowsFeatures": [
+        { "name": "Containers" },
+        { "name": "NET-Framework-45-Features", "includeAllSubFeatures": true },
+        { "name": "NET-Framework-Features", "includeAllSubFeatures": true },
+        { "name": "Hyper-V", "includeAllSubFeatures": true },
+        { "name": "Hyper-V-PowerShell" }
+    ],
+    "docker": {
+        "images": [
+            "mcr.microsoft.com/windows/servercore:ltsc2022",
+            "mcr.microsoft.com/businesscentral:ltsc2022"
+        ],
+        "components": {
+            "docker": "27.5.1",
+            "compose": "2.32.2"
+        }
+    },
+    "dotnet": {
+        "versions": [
+            "8.0"
+        ],
+        "tools": [],
+        "warmup": false
+    },
+    "choco": {
+        "common_packages": [
+            { "name": "7zip.install" },
+            { "name": "jq" },
+            { "name": "NuGet.CommandLine" }
+        ]
+    },
+    "node": {
+        "default": "20.*"
+    },
+    "pwsh": {
+        "version": "7.4"
+    }
+}

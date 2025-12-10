@@ -121,10 +121,9 @@ jobs:
           PKR_VAR_bc_select: ${{ inputs.bc_select }}
           PKR_VAR_bc_cache_skip: ${{ inputs.skip_bc_cache }}
         run: |
-          packer validate \
-            -var-file=variable.windows.pkr.hcl \
-            -var-file=variable.windows-algo.pkr.hcl \
-            build.windows-2022-algo.pkr.hcl
+          # All .pkr.hcl files in this directory are auto-loaded by Packer
+          # Only specify the build template we want to run
+          packer validate -only="*.windows-2022-algo" .
 
       - name: Build Managed Image
         id: build
@@ -149,12 +148,13 @@ jobs:
           PKR_VAR_bc_select: ${{ inputs.bc_select }}
           PKR_VAR_bc_cache_skip: ${{ inputs.skip_bc_cache }}
         run: |
+          # All .pkr.hcl files in this directory are auto-loaded by Packer
+          # Only specify the build template we want to run
           packer build \
-            -var-file=variable.windows.pkr.hcl \
-            -var-file=variable.windows-algo.pkr.hcl \
+            -only="*.windows-2022-algo" \
             -color=false \
             -on-error=abort \
-            build.windows-2022-algo.pkr.hcl
+            .
 
       - name: Upload software report
         if: always()

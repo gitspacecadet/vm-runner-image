@@ -24,7 +24,6 @@
     ],
     "docker": {
         "images": [
-            "mcr.microsoft.com/windows/servercore:ltsc2022",
             "mcr.microsoft.com/businesscentral:ltsc2022"
         ],
         "components": {

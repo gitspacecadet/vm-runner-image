@@ -8,6 +8,13 @@
 ##         This approach keeps Helpers.psm1 unchanged for easy upstream sync.
 ################################################################################
 
+# Import required modules
+# Pester must be imported BEFORE using [PesterConfiguration] type
+Import-Module Pester -ErrorAction Stop
+
+# Import ImageHelpers for Update-Environment function
+Import-Module ImageHelpers -ErrorAction Stop
+
 # Tests to run for AL-Go minimal image
 # NOTE: DotnetSDK removed - .NET SDK download hangs on Akamai CDN
 # BC containers include their own .NET runtime, AL-Go uses AL compiler from BC artifacts

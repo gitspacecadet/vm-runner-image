@@ -30,7 +30,8 @@
         { "name": "NET-Framework-45-Features", "includeAllSubFeatures": true },
         { "name": "NET-Framework-Features", "includeAllSubFeatures": true },
         { "name": "Hyper-V", "includeAllSubFeatures": true },
-        { "name": "Hyper-V-PowerShell" }
+        { "name": "Hyper-V-PowerShell" },
+        { "name": "Wireless-Networking" }
     ],
     "docker": {
         "images": [

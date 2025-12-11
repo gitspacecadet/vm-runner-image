@@ -11,8 +11,12 @@
         }
     ],
     "powershellModules": [
+        { "name": "DockerMsftProvider" },
+        { "name": "MarkdownPS" },
         { "name": "Pester" },
-        { "name": "PowerShellGet" }
+        { "name": "PowerShellGet" },
+        { "name": "PSScriptAnalyzer" },
+        { "name": "PSWindowsUpdate" }
     ],
     "windowsFeatures": [
         { "name": "Containers" },

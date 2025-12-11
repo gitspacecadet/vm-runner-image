@@ -107,6 +107,7 @@ build {
     restart_timeout       = "10m"
   }
 
+  # Disable wlansvc service (Wireless-Networking feature workaround)
   provisioner "powershell" {
     inline = [
       "Set-Service -Name wlansvc -StartupType Manual",
@@ -115,12 +116,12 @@ build {
   }
 
   # Phase 7: Install Docker and PowerShell Core
+  # NOTE: Docker Compose removed - not needed for BC containers (uses Docker directly)
   provisioner "powershell" {
     environment_vars = ["IMAGE_FOLDER=${var.image_folder}", "TEMP_DIR=${var.temp_dir}"]
     scripts = [
       "${path.root}/../scripts/build/Install-Docker.ps1",
       "${path.root}/../scripts/build/Install-DockerWinCred.ps1",
-      "${path.root}/../scripts/build/Install-DockerCompose.ps1",
       "${path.root}/../scripts/build/Install-PowershellCore.ps1"
     ]
   }
@@ -143,6 +144,8 @@ build {
   }
 
   # Phase 9: Core tooling for AL-Go
+  # NOTE: Azure Az modules removed - not needed for standard BC AL-Go workflows
+  # Re-add Install-PowershellAzModules.ps1 if using Azure Key Vault for secrets
   provisioner "powershell" {
     environment_vars = ["IMAGE_FOLDER=${var.image_folder}", "TEMP_DIR=${var.temp_dir}"]
     scripts = [
@@ -150,7 +153,6 @@ build {
       "${path.root}/../scripts/build/Install-Toolset.ps1",
       "${path.root}/../scripts/build/Configure-Toolset.ps1",
       "${path.root}/../scripts/build/Install-NodeJS.ps1",
-      "${path.root}/../scripts/build/Install-PowershellAzModules.ps1",
       "${path.root}/../scripts/build/Install-Git.ps1",
       "${path.root}/../scripts/build/Install-GitHub-CLI.ps1",
       "${path.root}/../scripts/build/Install-DotnetSDK.ps1",
@@ -195,13 +197,15 @@ build {
   }
 
   # Phase 12: Cleanup and tests
+  # NOTE: Using RunAll-ALGo-Tests.ps1 instead of RunAll-Tests.ps1
+  # This only tests tools included in the minimal AL-Go toolset
   provisioner "powershell" {
     pause_before     = "2m0s"
     environment_vars = ["IMAGE_FOLDER=${var.image_folder}", "TEMP_DIR=${var.temp_dir}"]
     scripts = [
       "${path.root}/../scripts/build/Install-WindowsUpdatesAfterReboot.ps1",
       "${path.root}/../scripts/build/Invoke-Cleanup.ps1",
-      "${path.root}/../scripts/tests/RunAll-Tests.ps1"
+      "${path.root}/../scripts/tests/RunAll-ALGo-Tests.ps1"
     ]
   }
 

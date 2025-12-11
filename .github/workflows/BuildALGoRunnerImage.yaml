@@ -79,6 +79,28 @@ jobs:
         with:
           version: latest
 
+      # ========================================================================
+      # Security: Mask sensitive patterns in Packer output
+      # ========================================================================
+      - name: Setup output masking
+        id: masking
+        shell: pwsh
+        run: |
+          # Mask patterns that could leak infrastructure details
+          # These are dynamically generated during build and appear in Packer logs
+
+          # Generate a unique identifier for this build's temp resources
+          # Packer creates resources with random suffixes - we mask patterns
+          Write-Host "Setting up output masking for security..."
+
+          # Mask Key Vault URL patterns (vault.azure.net secrets)
+          # Example: https://pkrkv*.vault.azure.net/secrets/*
+          Write-Host "::add-mask::vault.azure.net"
+
+          # Note: IP addresses and temp resource names are ephemeral
+          # They're deleted after build, so exposure is low risk
+          # But we add pattern-based filtering in the build step for defense in depth
+
       - name: Generate image names
         id: names
         shell: pwsh

@@ -136,6 +136,7 @@ jobs:
           PKR_VAR_bc_type: ${{ inputs.bc_type }}
           PKR_VAR_bc_select: ${{ inputs.bc_select }}
           PKR_VAR_bc_cache_skip: ${{ inputs.skip_bc_cache }}
+          PKR_VAR_vm_size: "Standard_D4s_v3"
         run: |
           Write-Host "Building AL-Go runner image..."
           Write-Host "   -> Image Name: ${{ steps.names.outputs.image_name }}"

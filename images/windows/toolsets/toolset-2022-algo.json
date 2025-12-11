@@ -30,13 +30,6 @@
             "docker": "27.5.1"
         }
     },
-    "dotnet": {
-        "versions": [
-            "8.0"
-        ],
-        "tools": [],
-        "warmup": false
-    },
     "choco": {
         "common_packages": [
             { "name": "7zip.install" },

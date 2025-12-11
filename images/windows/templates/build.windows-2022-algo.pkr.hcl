@@ -146,6 +146,8 @@ build {
   # Phase 9: Core tooling for AL-Go
   # NOTE: Azure Az modules removed - not needed for standard BC AL-Go workflows
   # Re-add Install-PowershellAzModules.ps1 if using Azure Key Vault for secrets
+  # NOTE: Install-DotnetSDK.ps1 removed - .NET SDK download hangs on Akamai CDN
+  # BC containers include their own .NET runtime, AL-Go uses AL compiler from BC artifacts
   provisioner "powershell" {
     environment_vars = ["IMAGE_FOLDER=${var.image_folder}", "TEMP_DIR=${var.temp_dir}"]
     scripts = [
@@ -155,7 +157,6 @@ build {
       "${path.root}/../scripts/build/Install-NodeJS.ps1",
       "${path.root}/../scripts/build/Install-Git.ps1",
       "${path.root}/../scripts/build/Install-GitHub-CLI.ps1",
-      "${path.root}/../scripts/build/Install-DotnetSDK.ps1",
       "${path.root}/../scripts/build/Install-RootCA.ps1",
       "${path.root}/../scripts/build/Configure-Diagnostics.ps1"
     ]

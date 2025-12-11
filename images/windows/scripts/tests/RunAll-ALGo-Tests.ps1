@@ -5,12 +5,13 @@
 ################################################################################
 
 # Tests to run for AL-Go minimal image
+# NOTE: DotnetSDK removed - .NET SDK download hangs on Akamai CDN
+# BC containers include their own .NET runtime, AL-Go uses AL compiler from BC artifacts
 $algoTests = @(
     "ActionArchiveCache",   # Actions cache
     "BcCache",              # BC container cache
     "CLI.Tools",            # Azure CLI, GitHub CLI
     "Docker-ALGo",          # Docker (without Compose test)
-    "DotnetSDK",            # .NET SDK
     "Git",                  # Git
     "Node",                 # Node.js
     "PowerShellModules",    # PowerShell modules

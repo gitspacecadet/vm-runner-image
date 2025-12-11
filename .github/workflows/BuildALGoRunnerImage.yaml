@@ -68,6 +68,7 @@ jobs:
     outputs:
       image_name: ${{ steps.names.outputs.image_name }}
       image_version: ${{ steps.names.outputs.image_version }}
+      temp_rg_name: ${{ steps.names.outputs.temp_rg_name }}
 
     steps:
       - name: Checkout repository
@@ -84,9 +85,14 @@ jobs:
         run: |
           $ImageName = "algo-runner-win22-$(Get-Date -Format 'yyyyMMdd.HHmm')"
           $ImageVersion = "1.$(Get-Date -Format 'yyyyMMdd.HHmm')"
+          # Generate temp RG name: base-temp-<random6>
+          $randomSuffix = -join ((48..57) + (97..122) | Get-Random -Count 6 | ForEach-Object {[char]$_})
+          $TempRgName = "${{ vars.AZURE_RESOURCE_GROUP }}-temp-$randomSuffix"
           "image_name=$ImageName" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "image_version=$ImageVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "temp_rg_name=$TempRgName" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           Write-Host "::notice::Image name: $ImageName, Version: $ImageVersion"
+          Write-Host "::notice::Temp RG: $TempRgName"
 
       - name: Generate install password
         id: password
@@ -137,10 +143,12 @@ jobs:
           PKR_VAR_bc_select: ${{ inputs.bc_select }}
           PKR_VAR_bc_cache_skip: ${{ inputs.skip_bc_cache }}
           PKR_VAR_vm_size: "Standard_D4s_v3"
+          PKR_VAR_temp_resource_group_name: ${{ steps.names.outputs.temp_rg_name }}
         run: |
           Write-Host "Building AL-Go runner image..."
           Write-Host "   -> Image Name: ${{ steps.names.outputs.image_name }}"
           Write-Host "   -> Image Version: ${{ steps.names.outputs.image_version }}"
+          Write-Host "   -> Temp RG: ${{ steps.names.outputs.temp_rg_name }}"
           Write-Host "   -> BC Type: ${{ inputs.bc_type }}"
           Write-Host "   -> BC Country: ${{ inputs.bc_country }}"
 
@@ -282,3 +290,34 @@ jobs:
           "| **Image Version** | ${{ needs.build-image.outputs.image_version }} |" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
           "| **Gallery** | ${{ vars.AZURE_GALLERY_NAME }} |" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
           "| **Resource Group** | ${{ vars.AZURE_RESOURCE_GROUP }} |" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+
+  # ============================================================================
+  # Job 4: Cleanup Temp Resources (runs on failure/cancellation)
+  # ============================================================================
+  cleanup:
+    name: Cleanup Temp Resources
+    needs: build-image
+    runs-on: self-hosted
+    if: always() && needs.build-image.outputs.temp_rg_name != ''
+    timeout-minutes: 10
+
+    steps:
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
+
+      - name: Delete temp resource group if exists
+        shell: pwsh
+        run: |
+          $tempRgName = "${{ needs.build-image.outputs.temp_rg_name }}"
+          Write-Host "Checking for temp resource group: $tempRgName"
+
+          $rgExists = az group exists --name $tempRgName
+          if ($rgExists -eq "true") {
+            Write-Host "Deleting temp resource group: $tempRgName"
+            az group delete --name $tempRgName --yes --no-wait
+            Write-Host "Deletion initiated (async)"
+          } else {
+            Write-Host "Temp resource group not found (already cleaned up by Packer)"
+          }

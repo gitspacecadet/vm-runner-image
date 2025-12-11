@@ -8,6 +8,13 @@
 ##         This approach keeps Helpers.psm1 unchanged for easy upstream sync.
 ################################################################################
 
+# Import required modules (session-scoped, not inherited from earlier provisioners)
+# Each Packer provisioner block runs in a new PowerShell session, so modules
+# installed in Phase 5 are available on disk but NOT imported in Phase 12's session.
+Import-Module "C:\Modules\ImageHelpers\ImageHelpers.psm1" -Force
+Import-Module "C:\Modules\TestsHelpers\TestsHelpers.psm1" -Force
+Import-Module Pester -Force
+
 # Tests to run for AL-Go minimal image
 # NOTE: DotnetSDK removed - .NET SDK download hangs on Akamai CDN
 # BC containers include their own .NET runtime, AL-Go uses AL compiler from BC artifacts

@@ -144,7 +144,7 @@ jobs:
           Write-Host "   -> BC Country: ${{ inputs.bc_country }}"
 
           packer build `
-            -only="*.windows-2022-algo" `
+            -only="windows-2022-algo.azure-arm.image" `
             -color=false `
             -on-error=abort `
             .

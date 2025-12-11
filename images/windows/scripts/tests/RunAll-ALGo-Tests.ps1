@@ -15,6 +15,10 @@ Import-Module Pester -ErrorAction Stop
 # Import ImageHelpers for Update-Environment function
 Import-Module ImageHelpers -ErrorAction Stop
 
+# Import Helpers module to register custom Pester operators (ReturnZeroExitCode, etc.)
+# This module dot-sources Add-ShouldOperator calls when loaded
+Import-Module "$PSScriptRoot\Helpers.psm1" -ErrorAction Stop
+
 # Tests to run for AL-Go minimal image
 # NOTE: DotnetSDK removed - .NET SDK download hangs on Akamai CDN
 # BC containers include their own .NET runtime, AL-Go uses AL compiler from BC artifacts

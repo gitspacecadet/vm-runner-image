@@ -1,18 +1,9 @@
 {
-    "toolcache": [
-        {
-            "name": "node",
-            "url" : "https://raw.githubusercontent.com/actions/node-versions/main/versions-manifest.json",
-            "arch": "x64",
-            "platform" : "win32",
-            "versions": [
-                "20.*"
-            ]
-        }
-    ],
+    "toolcache": [],
     "powershellModules": [
         { "name": "Pester" },
-        { "name": "PowerShellGet" }
+        { "name": "PowerShellGet" },
+        { "name": "PSWindowsUpdate" }
     ],
     "windowsFeatures": [
         { "name": "Containers" },
@@ -36,9 +27,6 @@
             { "name": "jq" },
             { "name": "NuGet.CommandLine" }
         ]
-    },
-    "node": {
-        "default": "20.*"
     },
     "pwsh": {
         "version": "7.4"

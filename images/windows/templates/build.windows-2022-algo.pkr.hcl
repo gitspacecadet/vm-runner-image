@@ -148,13 +148,13 @@ build {
   # Re-add Install-PowershellAzModules.ps1 if using Azure Key Vault for secrets
   # NOTE: Install-DotnetSDK.ps1 removed - .NET SDK download hangs on Akamai CDN
   # BC containers include their own .NET runtime, AL-Go uses AL compiler from BC artifacts
+  # NOTE: Install-NodeJS.ps1 removed - not needed for BC AL-Go workflows
   provisioner "powershell" {
     environment_vars = ["IMAGE_FOLDER=${var.image_folder}", "TEMP_DIR=${var.temp_dir}"]
     scripts = [
       "${path.root}/../scripts/build/Install-ActionsCache.ps1",
       "${path.root}/../scripts/build/Install-Toolset.ps1",
       "${path.root}/../scripts/build/Configure-Toolset.ps1",
-      "${path.root}/../scripts/build/Install-NodeJS.ps1",
       "${path.root}/../scripts/build/Install-Git.ps1",
       "${path.root}/../scripts/build/Install-GitHub-CLI.ps1",
       "${path.root}/../scripts/build/Install-RootCA.ps1",

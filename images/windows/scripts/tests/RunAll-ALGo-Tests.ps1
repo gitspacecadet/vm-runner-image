@@ -10,7 +10,7 @@
 $algoTests = @(
     "ActionArchiveCache",   # Actions cache
     "BcCache",              # BC container cache
-    "CLI.Tools",            # Azure CLI, GitHub CLI
+    "CLI.Tools-ALGo",       # Azure CLI, GitHub CLI (AL-Go version - no AWS/Aliyun)
     "Docker-ALGo",          # Docker (without Compose test)
     "Git",                  # Git
     "Node",                 # Node.js

@@ -5,7 +5,9 @@
 # Unlike the full Generate-SoftwareReport.ps1, this only reports on tools
 # that are actually installed in our minimal AL-Go toolset.
 #
-# This avoids errors like "go: command not found" since Go isn't installed.
+# This avoids errors like:
+# - "go: command not found" since Go isn't installed
+# - "Cannot find path 'C:\Modules'" since we don't install Azure modules there
 ################################################################################
 
 using module ./software-report-base/SoftwareReport.psm1
@@ -20,6 +22,34 @@ Set-StrictMode -Version Latest
 Import-Module (Join-Path $PSScriptRoot "SoftwareReport.Common.psm1") -DisableNameChecking
 Import-Module (Join-Path $PSScriptRoot "SoftwareReport.Helpers.psm1") -DisableNameChecking
 Import-Module (Join-Path $PSScriptRoot "SoftwareReport.Tools.psm1") -DisableNameChecking
+
+################################################################################
+# AL-Go specific helper function for PowerShell modules
+# This avoids calling Get-PowerShellModules which expects C:\Modules to exist
+################################################################################
+function Get-ALGoPowerShellModules {
+    [Array] $result = @()
+
+    # Get module names from our AL-Go toolset (not the full toolset)
+    $algoModules = @(
+        "DockerMsftProvider",
+        "MarkdownPS",
+        "Pester",
+        "PowerShellGet",
+        "PSScriptAnalyzer",
+        "PSWindowsUpdate"
+    )
+
+    foreach ($moduleName in $algoModules) {
+        $moduleVersions = Get-Module -Name $moduleName -ListAvailable -ErrorAction SilentlyContinue |
+            Select-Object -ExpandProperty Version | Sort-Object -Unique
+        if ($moduleVersions) {
+            $result += [ToolVersionsListNode]::new($moduleName, $moduleVersions, '^\d+', "Inline")
+        }
+    }
+
+    return $result
+}
 
 # Software report
 $softwareReport = [SoftwareReport]::new($(Build-OSInfoSection))
@@ -70,10 +100,10 @@ if ($nodeVersions) {
     $cachedTools.AddToolVersionsListInline("Node.js", $nodeVersions, '^\d+')
 }
 
-# PowerShell Modules
+# PowerShell Modules - use AL-Go specific function to avoid C:\Modules dependency
 $psTools = $installedSoftware.AddHeader("PowerShell Tools")
 $psModules = $psTools.AddHeader("PowerShell Modules")
-$psModules.AddNodes($(Get-PowerShellModules))
+$psModules.AddNodes($(Get-ALGoPowerShellModules))
 
 # Docker Images - BC specific
 $dockerSection = $installedSoftware.AddHeader("Cached Docker images")

@@ -17,7 +17,9 @@ Import-Module ImageHelpers -ErrorAction Stop
 
 # Import Helpers module to register custom Pester operators (ReturnZeroExitCode, etc.)
 # This module dot-sources Add-ShouldOperator calls when loaded
-Import-Module "$PSScriptRoot\Helpers.psm1" -ErrorAction Stop
+# NOTE: Use absolute path because Packer uploads scripts to C:\Windows\Temp (which gets cleaned)
+#       and $PSScriptRoot would resolve to that temp location, not C:\image\tests
+Import-Module "C:\image\tests\Helpers.psm1" -ErrorAction Stop
 
 # Tests to run for AL-Go minimal image
 # NOTE: DotnetSDK removed - .NET SDK download hangs on Akamai CDN

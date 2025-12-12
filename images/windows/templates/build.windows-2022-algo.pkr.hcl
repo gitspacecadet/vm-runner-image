@@ -263,12 +263,15 @@ build {
   }
 
   # Phase 14: Final system configuration
+  # NOTE: Using Configure-User-ALGo.ps1 instead of Configure-User.ps1
+  # The full Configure-User.ps1 requires Visual Studio (calls Get-VisualStudioInstance)
+  # AL-Go images don't include VS, so we use a minimal version that skips VS warmup
   provisioner "powershell" {
     environment_vars = ["INSTALL_USER=${var.install_user}"]
     scripts = [
       "${path.root}/../scripts/build/Install-NativeImages.ps1",
       "${path.root}/../scripts/build/Configure-System.ps1",
-      "${path.root}/../scripts/build/Configure-User.ps1",
+      "${path.root}/../scripts/build/Configure-User-ALGo.ps1",
       "${path.root}/../scripts/build/Post-Build-Validation.ps1"
     ]
     skip_clean = true

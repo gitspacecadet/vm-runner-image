@@ -118,11 +118,12 @@ $bcCachePath = "C:\bcartifacts.cache"
 $bcMetadataFile = Join-Path $bcCachePath "bc-cache-metadata.json"
 if (Test-Path $bcMetadataFile) {
     $bcMetadata = Get-Content $bcMetadataFile | ConvertFrom-Json
-    $bcSection.AddToolVersion("BC Artifact Version", $bcMetadata.artifactVersion)
+    # Property names match Create-BcImage.ps1 metadata output
+    $bcSection.AddToolVersion("BC Artifact URL", $bcMetadata.artifactUrl)
     $bcSection.AddToolVersion("BC Country", $bcMetadata.country)
     $bcSection.AddToolVersion("BC Type", $bcMetadata.type)
-    $bcSection.AddToolVersion("Cached Image Tag", $bcMetadata.cachedImageTag)
-    $bcSection.AddToolVersion("Cache Date", $bcMetadata.cacheDate)
+    $bcSection.AddToolVersion("Docker Image", $bcMetadata.dockerImage)
+    $bcSection.AddToolVersion("Cache Timestamp", $bcMetadata.timestampUtc)
 } else {
     $bcSection.AddNote("BC cache metadata not found")
 }

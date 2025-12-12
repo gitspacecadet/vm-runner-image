@@ -214,10 +214,12 @@ build {
     inline = ["if (-not (Test-Path ${var.image_folder}\\tests\\testResults.xml)) { throw '${var.image_folder}\\tests\\testResults.xml not found' }"]
   }
 
-  # Phase 13: Generate software report
+  # Phase 13: Generate software report (using AL-Go minimal version)
+  # NOTE: Using Generate-SoftwareReport-ALGo.ps1 instead of Generate-SoftwareReport.ps1
+  # The full report generator expects tools like Go, Ruby, Python etc. that we don't install
   provisioner "powershell" {
     environment_vars = ["IMAGE_VERSION=${var.image_version}", "IMAGE_FOLDER=${var.image_folder}"]
-    inline           = ["pwsh -File '${var.image_folder}\\SoftwareReport\\Generate-SoftwareReport.ps1'"]
+    inline           = ["pwsh -File '${var.image_folder}\\SoftwareReport\\Generate-SoftwareReport-ALGo.ps1'"]
   }
 
   provisioner "powershell" {

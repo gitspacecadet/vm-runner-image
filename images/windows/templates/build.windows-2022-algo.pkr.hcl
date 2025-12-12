@@ -76,7 +76,28 @@ build {
     inline            = ["bcdedit.exe /set TESTSIGNING ON"]
   }
 
-  # Phase 5: Base configuration (minimal scripts)
+  # Phase 5a: Setup ImageHelpers module in AllUsersAllHosts profile
+  # After Phase 3 moved helpers to module path, we need to ensure the module
+  # is imported in EVERY PowerShell session. Adding to AllUsersAllHosts profile
+  # makes helper functions (Get-ToolsetContent, Test-IsWin*, etc.) available.
+  # This is required because Packer runs each script in a separate PS session.
+  provisioner "powershell" {
+    inline = [
+      "Write-Host 'Setting up ImageHelpers module in PowerShell profile...'",
+      "$profilePath = $profile.AllUsersAllHosts",
+      "if (-not (Test-Path (Split-Path $profilePath))) { New-Item -Path (Split-Path $profilePath) -ItemType Directory -Force | Out-Null }",
+      "if (-not (Test-Path $profilePath)) { New-Item -Path $profilePath -ItemType File -Force | Out-Null }",
+      "'Import-Module ImageHelpers -Force -ErrorAction SilentlyContinue' | Add-Content -Path $profilePath -Force",
+      "Write-Host \"Added ImageHelpers import to: $profilePath\"",
+      "Write-Host 'Verifying module can be imported...'",
+      "Import-Module ImageHelpers -Force -ErrorAction Stop",
+      "Write-Host 'ImageHelpers module loaded successfully. Available functions:'",
+      "Get-Command -Module ImageHelpers | Select-Object -ExpandProperty Name | ForEach-Object { Write-Host \"  - $_\" }"
+    ]
+  }
+
+  # Phase 5b: Base configuration (minimal scripts)
+  # NOTE: ImageHelpers module is auto-imported via AllUsersAllHosts profile
   provisioner "powershell" {
     environment_vars = [
       "IMAGE_VERSION=${var.image_version}",

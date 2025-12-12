@@ -15,11 +15,11 @@ Import-Module Pester -ErrorAction Stop
 # Import ImageHelpers for Update-Environment function
 Import-Module ImageHelpers -ErrorAction Stop
 
-# Import Helpers module to register custom Pester operators (ReturnZeroExitCode, etc.)
-# This module dot-sources Add-ShouldOperator calls when loaded
-# NOTE: Use absolute path because Packer uploads scripts to C:\Windows\Temp (which gets cleaned)
-#       and $PSScriptRoot would resolve to that temp location, not C:\image\tests
-Import-Module "C:\image\tests\Helpers.psm1" -ErrorAction Stop
+# Import TestsHelpers module to register custom Pester operators (ReturnZeroExitCode, etc.)
+# NOTE: In Packer build, Helpers.psm1 gets moved to:
+#       C:\Program Files\WindowsPowerShell\Modules\TestsHelpers\TestsHelpers.psm1
+#       This happens in Phase 3 of build.windows-2022-algo.pkr.hcl
+Import-Module TestsHelpers -ErrorAction Stop
 
 # Tests to run for AL-Go minimal image
 # NOTE: DotnetSDK removed - .NET SDK download hangs on Akamai CDN

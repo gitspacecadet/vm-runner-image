@@ -38,15 +38,23 @@ Write-Host "Clean up various directories"
 # Remove AllUsersAllHosts profile
 Remove-Item $profile.AllUsersAllHosts -Force -ErrorAction SilentlyContinue | Out-Null
 
-# Clean yarn and npm cache
-cmd /c "yarn cache clean 2>&1" | Out-Null
-if ($LASTEXITCODE -ne 0) {
-    throw "Failed to clean yarn cache"
+# Clean yarn and npm cache (only if installed)
+if (Get-Command yarn -ErrorAction SilentlyContinue) {
+    cmd /c "yarn cache clean 2>&1" | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Warning: Failed to clean yarn cache"
+    }
+} else {
+    Write-Host "Yarn not installed, skipping yarn cache cleanup"
 }
 
-cmd /c "npm cache clean --force 2>&1" | Out-Null
-if ($LASTEXITCODE -ne 0) {
-    throw "Failed to clean npm cache"
+if (Get-Command npm -ErrorAction SilentlyContinue) {
+    cmd /c "npm cache clean --force 2>&1" | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Warning: Failed to clean npm cache"
+    }
+} else {
+    Write-Host "NPM not installed, skipping npm cache cleanup"
 }
 
 if (Test-IsWin25) {

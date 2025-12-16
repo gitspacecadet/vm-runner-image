@@ -79,6 +79,33 @@ jobs:
         with:
           version: latest
 
+      # ========================================================================
+      # Security: Mask sensitive patterns in Packer output
+      # ========================================================================
+      - name: Setup output masking
+        id: masking
+        shell: pwsh
+        run: |
+          # Mask patterns that could leak infrastructure details
+          # These are dynamically generated during build and appear in Packer logs
+          Write-Host "Setting up output masking for security..."
+
+          # Mask Key Vault URL patterns (vault.azure.net secrets)
+          # Example: https://pkrkv*.vault.azure.net/secrets/*
+          Write-Host "::add-mask::vault.azure.net"
+
+          # Get the runner's public IP and mask it
+          # This prevents exposing the build VM's IP address in logs
+          try {
+            $publicIp = (Invoke-RestMethod -Uri 'https://api.ipify.org' -TimeoutSec 10)
+            if ($publicIp -match '^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$') {
+              Write-Host "::add-mask::$publicIp"
+              Write-Host "Masked runner public IP"
+            }
+          } catch {
+            Write-Host "Could not determine public IP for masking (non-critical)"
+          }
+
       - name: Generate image names
         id: names
         shell: pwsh

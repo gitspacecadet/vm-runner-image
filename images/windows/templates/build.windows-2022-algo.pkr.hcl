@@ -76,7 +76,28 @@ build {
     inline            = ["bcdedit.exe /set TESTSIGNING ON"]
   }
 
-  # Phase 5: Base configuration (minimal scripts)
+  # Phase 5a: Setup ImageHelpers module in AllUsersAllHosts profile
+  # After Phase 3 moved helpers to module path, we need to ensure the module
+  # is imported in EVERY PowerShell session. Adding to AllUsersAllHosts profile
+  # makes helper functions (Get-ToolsetContent, Test-IsWin*, etc.) available.
+  # This is required because Packer runs each script in a separate PS session.
+  provisioner "powershell" {
+    inline = [
+      "Write-Host 'Setting up ImageHelpers module in PowerShell profile...'",
+      "$profilePath = $profile.AllUsersAllHosts",
+      "if (-not (Test-Path (Split-Path $profilePath))) { New-Item -Path (Split-Path $profilePath) -ItemType Directory -Force | Out-Null }",
+      "if (-not (Test-Path $profilePath)) { New-Item -Path $profilePath -ItemType File -Force | Out-Null }",
+      "'Import-Module ImageHelpers -Force -ErrorAction SilentlyContinue' | Add-Content -Path $profilePath -Force",
+      "Write-Host \"Added ImageHelpers import to: $profilePath\"",
+      "Write-Host 'Verifying module can be imported...'",
+      "Import-Module ImageHelpers -Force -ErrorAction Stop",
+      "Write-Host 'ImageHelpers module loaded successfully. Available functions:'",
+      "Get-Command -Module ImageHelpers | Select-Object -ExpandProperty Name | ForEach-Object { Write-Host \"  - $_\" }"
+    ]
+  }
+
+  # Phase 5b: Base configuration (minimal scripts)
+  # NOTE: ImageHelpers module is auto-imported via AllUsersAllHosts profile
   provisioner "powershell" {
     environment_vars = [
       "IMAGE_VERSION=${var.image_version}",
@@ -107,6 +128,7 @@ build {
     restart_timeout       = "10m"
   }
 
+  # Disable wlansvc service (Wireless-Networking feature workaround)
   provisioner "powershell" {
     inline = [
       "Set-Service -Name wlansvc -StartupType Manual",
@@ -115,12 +137,12 @@ build {
   }
 
   # Phase 7: Install Docker and PowerShell Core
+  # NOTE: Docker Compose removed - not needed for BC containers (uses Docker directly)
   provisioner "powershell" {
     environment_vars = ["IMAGE_FOLDER=${var.image_folder}", "TEMP_DIR=${var.temp_dir}"]
     scripts = [
       "${path.root}/../scripts/build/Install-Docker.ps1",
       "${path.root}/../scripts/build/Install-DockerWinCred.ps1",
-      "${path.root}/../scripts/build/Install-DockerCompose.ps1",
       "${path.root}/../scripts/build/Install-PowershellCore.ps1"
     ]
   }
@@ -143,6 +165,10 @@ build {
   }
 
   # Phase 9: Core tooling for AL-Go
+  # NOTE: Azure Az modules removed - not needed for standard BC AL-Go workflows
+  # Re-add Install-PowershellAzModules.ps1 if using Azure Key Vault for secrets
+  # NOTE: Install-DotnetSDK.ps1 removed - .NET SDK download hangs on Akamai CDN
+  # BC containers include their own .NET runtime, AL-Go uses AL compiler from BC artifacts
   provisioner "powershell" {
     environment_vars = ["IMAGE_FOLDER=${var.image_folder}", "TEMP_DIR=${var.temp_dir}"]
     scripts = [
@@ -150,10 +176,8 @@ build {
       "${path.root}/../scripts/build/Install-Toolset.ps1",
       "${path.root}/../scripts/build/Configure-Toolset.ps1",
       "${path.root}/../scripts/build/Install-NodeJS.ps1",
-      "${path.root}/../scripts/build/Install-PowershellAzModules.ps1",
       "${path.root}/../scripts/build/Install-Git.ps1",
       "${path.root}/../scripts/build/Install-GitHub-CLI.ps1",
-      "${path.root}/../scripts/build/Install-DotnetSDK.ps1",
       "${path.root}/../scripts/build/Install-RootCA.ps1",
       "${path.root}/../scripts/build/Configure-Diagnostics.ps1"
     ]
@@ -195,13 +219,15 @@ build {
   }
 
   # Phase 12: Cleanup and tests
+  # NOTE: Using RunAll-ALGo-Tests.ps1 instead of RunAll-Tests.ps1
+  # This only tests tools included in the minimal AL-Go toolset
   provisioner "powershell" {
     pause_before     = "2m0s"
     environment_vars = ["IMAGE_FOLDER=${var.image_folder}", "TEMP_DIR=${var.temp_dir}"]
     scripts = [
       "${path.root}/../scripts/build/Install-WindowsUpdatesAfterReboot.ps1",
       "${path.root}/../scripts/build/Invoke-Cleanup.ps1",
-      "${path.root}/../scripts/tests/RunAll-Tests.ps1"
+      "${path.root}/../scripts/tests/RunAll-ALGo-Tests.ps1"
     ]
   }
 
@@ -209,10 +235,12 @@ build {
     inline = ["if (-not (Test-Path ${var.image_folder}\\tests\\testResults.xml)) { throw '${var.image_folder}\\tests\\testResults.xml not found' }"]
   }
 
-  # Phase 13: Generate software report
+  # Phase 13: Generate software report (using AL-Go minimal version)
+  # NOTE: Using Generate-SoftwareReport-ALGo.ps1 instead of Generate-SoftwareReport.ps1
+  # The full report generator expects tools like Go, Ruby, Python etc. that we don't install
   provisioner "powershell" {
     environment_vars = ["IMAGE_VERSION=${var.image_version}", "IMAGE_FOLDER=${var.image_folder}"]
-    inline           = ["pwsh -File '${var.image_folder}\\SoftwareReport\\Generate-SoftwareReport.ps1'"]
+    inline           = ["pwsh -File '${var.image_folder}\\SoftwareReport\\Generate-SoftwareReport-ALGo.ps1'"]
   }
 
   provisioner "powershell" {
@@ -235,12 +263,15 @@ build {
   }
 
   # Phase 14: Final system configuration
+  # NOTE: Using Configure-User-ALGo.ps1 instead of Configure-User.ps1
+  # The full Configure-User.ps1 requires Visual Studio (calls Get-VisualStudioInstance)
+  # AL-Go images don't include VS, so we use a minimal version that skips VS warmup
   provisioner "powershell" {
     environment_vars = ["INSTALL_USER=${var.install_user}"]
     scripts = [
       "${path.root}/../scripts/build/Install-NativeImages.ps1",
       "${path.root}/../scripts/build/Configure-System.ps1",
-      "${path.root}/../scripts/build/Configure-User.ps1",
+      "${path.root}/../scripts/build/Configure-User-ALGo.ps1",
       "${path.root}/../scripts/build/Post-Build-Validation.ps1"
     ]
     skip_clean = true

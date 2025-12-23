@@ -178,6 +178,7 @@ build {
       "${path.root}/../scripts/build/Install-NodeJS.ps1",
       "${path.root}/../scripts/build/Install-Git.ps1",
       "${path.root}/../scripts/build/Install-GitHub-CLI.ps1",
+      "${path.root}/../scripts/build/Install-GitHubRunner.ps1",
       "${path.root}/../scripts/build/Install-RootCA.ps1",
       "${path.root}/../scripts/build/Configure-Diagnostics.ps1"
     ]

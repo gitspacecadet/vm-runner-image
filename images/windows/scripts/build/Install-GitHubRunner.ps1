@@ -22,7 +22,7 @@ $downloadUrl = "https://github.com/actions/runner/releases/download/v$runnerVers
 Write-Host "Download URL: $downloadUrl"
 
 # Download with retry logic using ImageHelpers
-$archivePath = Start-DownloadWithRetry -Url $downloadUrl -Name "actions-runner.zip"
+$archivePath = Invoke-DownloadWithRetry -Url $downloadUrl
 
 # Create install directory
 New-Item -ItemType Directory -Force -Path $runnerInstallDir | Out-Null

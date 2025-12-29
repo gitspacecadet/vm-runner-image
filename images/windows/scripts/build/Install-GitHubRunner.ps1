@@ -57,9 +57,12 @@ try {
 # List what was actually extracted (diagnostic)
 Write-Host "Files extracted to $runnerInstallDir :"
 $extractedFiles = Get-ChildItem -Path $runnerInstallDir -Recurse -File | Select-Object -First 20 Name, Length
-$extractedFiles | ForEach-Object { Write-Host "  - $($_.Name) ($($_.Length) bytes)" }
-if ((Get-ChildItem -Path $runnerInstallDir -Recurse -File).Count -gt 20) {
-    Write-Host "  ... and $((Get-ChildItem -Path $runnerInstallDir -Recurse -File).Count - 20) more files"
+foreach ($file in $extractedFiles) {
+    Write-Host "  - $($file.Name) ($($file.Length) bytes)"
+}
+$totalFiles = (Get-ChildItem -Path $runnerInstallDir -Recurse -File).Count
+if ($totalFiles -gt 20) {
+    Write-Host "  ... and $($totalFiles - 20) more files"
 }
 
 # Check Windows Defender quarantine

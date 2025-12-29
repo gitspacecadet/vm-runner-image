@@ -28,10 +28,15 @@ $archivePath = Invoke-DownloadWithRetry -Url $downloadUrl
 New-Item -ItemType Directory -Force -Path $runnerInstallDir | Out-Null
 Write-Host "Created directory: $runnerInstallDir"
 
-# Extract runner
+# Extract runner using PowerShell native ZIP extraction
 Write-Host "Extracting runner to $runnerInstallDir..."
-Expand-7ZipArchive -Path $archivePath -DestinationPath $runnerInstallDir
-Write-Host "Extraction complete"
+try {
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [System.IO.Compression.ZipFile]::ExtractToDirectory($archivePath, $runnerInstallDir)
+    Write-Host "Extraction complete"
+} catch {
+    throw "Failed to extract runner archive: $_"
+}
 
 # Verify critical files exist
 $criticalFiles = @(

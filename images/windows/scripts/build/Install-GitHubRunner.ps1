@@ -28,14 +28,50 @@ $archivePath = Invoke-DownloadWithRetry -Url $downloadUrl
 New-Item -ItemType Directory -Force -Path $runnerInstallDir | Out-Null
 Write-Host "Created directory: $runnerInstallDir"
 
+# List contents of ZIP before extraction (diagnostic)
+Write-Host "Listing ZIP archive contents..."
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$zip = [System.IO.Compression.ZipFile]::OpenRead($archivePath)
+$hasRunnerListener = $false
+foreach ($entry in $zip.Entries) {
+    if ($entry.Name -eq "Runner.Listener.exe") {
+        $hasRunnerListener = $true
+        Write-Host "✓ Found Runner.Listener.exe in ZIP (size: $($entry.Length) bytes)"
+    }
+}
+$zip.Dispose()
+
+if (-not $hasRunnerListener) {
+    throw "Runner.Listener.exe not found in downloaded ZIP archive - download may be corrupted"
+}
+
 # Extract runner using PowerShell native ZIP extraction
 Write-Host "Extracting runner to $runnerInstallDir..."
 try {
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
     [System.IO.Compression.ZipFile]::ExtractToDirectory($archivePath, $runnerInstallDir)
     Write-Host "Extraction complete"
 } catch {
     throw "Failed to extract runner archive: $_"
+}
+
+# List what was actually extracted (diagnostic)
+Write-Host "Files extracted to $runnerInstallDir :"
+$extractedFiles = Get-ChildItem -Path $runnerInstallDir -Recurse -File | Select-Object -First 20 Name, Length
+$extractedFiles | ForEach-Object { Write-Host "  - $($_.Name) ($($_.Length) bytes)" }
+if ((Get-ChildItem -Path $runnerInstallDir -Recurse -File).Count -gt 20) {
+    Write-Host "  ... and $((Get-ChildItem -Path $runnerInstallDir -Recurse -File).Count - 20) more files"
+}
+
+# Check Windows Defender quarantine
+Write-Host "Checking Windows Defender status..."
+$defenderStatus = Get-MpComputerStatus -ErrorAction SilentlyContinue
+if ($defenderStatus -and $defenderStatus.RealTimeProtectionEnabled) {
+    Write-Host "WARNING: Windows Defender Real-Time Protection is ENABLED"
+    $recentThreats = Get-MpThreatDetection -ErrorAction SilentlyContinue | Where-Object { $_.Resources -like "*Runner*" }
+    if ($recentThreats) {
+        Write-Host "WARNING: Windows Defender detected threats related to Runner:"
+        $recentThreats | ForEach-Object { Write-Host "  - $($_.ThreatName): $($_.Resources)" }
+    }
 }
 
 # Verify critical files exist

@@ -62,7 +62,8 @@ foreach ($file in $extractedFiles) {
 }
 $totalFiles = (Get-ChildItem -Path $runnerInstallDir -Recurse -File).Count
 if ($totalFiles -gt 20) {
-    Write-Host "  Total: $totalFiles files ($($totalFiles - 20) additional files not shown)"
+    $additionalFiles = $totalFiles - 20
+    Write-Host "  Total: $totalFiles files - $additionalFiles additional files not shown"
 }
 
 # Check Windows Defender quarantine

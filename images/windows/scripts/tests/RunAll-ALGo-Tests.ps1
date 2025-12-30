@@ -30,10 +30,12 @@ $algoTests = @(
     "CLI.Tools-ALGo",       # Azure CLI, GitHub CLI (AL-Go version - no AWS/Aliyun)
     "Docker-ALGo",          # Docker (without Compose test)
     "Git",                  # Git
+    "GitHubRunner",         # GitHub Actions runner pre-installation
     "Node",                 # Node.js
     "PowerShellModules",    # PowerShell modules
     "Shell",                # PowerShell Core
     "Toolset",              # General toolset validation
+    "VmssRunnerSetup",      # VMSS runner setup scripts pre-staging
     "WindowsFeatures"       # Windows features
 )
 

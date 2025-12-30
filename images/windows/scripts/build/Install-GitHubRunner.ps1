@@ -36,7 +36,7 @@ $hasRunnerListener = $false
 foreach ($entry in $zip.Entries) {
     if ($entry.Name -eq "Runner.Listener.exe") {
         $hasRunnerListener = $true
-        Write-Host "✓ Found Runner.Listener.exe in ZIP (size: $($entry.Length) bytes)"
+        Write-Host "✓ Found Runner.Listener.exe in ZIP - size: $($entry.Length) bytes"
     }
 }
 $zip.Dispose()
@@ -58,11 +58,11 @@ try {
 Write-Host "Files extracted to $runnerInstallDir :"
 $extractedFiles = Get-ChildItem -Path $runnerInstallDir -Recurse -File | Select-Object -First 20 Name, Length
 foreach ($file in $extractedFiles) {
-    Write-Host "  - $($file.Name) ($($file.Length) bytes)"
+    Write-Host "  - $($file.Name) - $($file.Length) bytes"
 }
 $totalFiles = (Get-ChildItem -Path $runnerInstallDir -Recurse -File).Count
 if ($totalFiles -gt 20) {
-    Write-Host "  ... and $($totalFiles - 20) more files"
+    Write-Host "  Total: $totalFiles files ($($totalFiles - 20) additional files not shown)"
 }
 
 # Check Windows Defender quarantine

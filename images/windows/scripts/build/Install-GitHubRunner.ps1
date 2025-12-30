@@ -36,7 +36,7 @@ $hasRunnerListener = $false
 foreach ($entry in $zip.Entries) {
     if ($entry.Name -eq "Runner.Listener.exe") {
         $hasRunnerListener = $true
-        Write-Host "✓ Found Runner.Listener.exe in ZIP - size: $($entry.Length) bytes"
+        Write-Host "[OK] Found Runner.Listener.exe in ZIP - size: $($entry.Length) bytes"
     }
 }
 $zip.Dispose()

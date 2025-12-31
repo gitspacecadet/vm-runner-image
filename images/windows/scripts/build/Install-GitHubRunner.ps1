@@ -64,11 +64,52 @@ if (-not $hasRunnerListener) {
     throw "Runner.Listener.exe not found in downloaded ZIP archive - download may be corrupted"
 }
 
-# Extract runner using PowerShell native ZIP extraction
+# Extract runner using file-by-file extraction for reliability
 Write-Host "Extracting runner to $runnerInstallDir..."
 try {
-    [System.IO.Compression.ZipFile]::ExtractToDirectory($archivePath, $runnerInstallDir)
-    Write-Host "Extraction complete"
+    $zip = [System.IO.Compression.ZipFile]::OpenRead($archivePath)
+    $extractedCount = 0
+    $listenerFound = $false
+
+    foreach ($entry in $zip.Entries) {
+        if ($entry.FullName -like "*/") {
+            # Skip directories - they'll be created automatically
+            continue
+        }
+
+        $destinationPath = Join-Path $runnerInstallDir $entry.FullName
+        $destinationDir = Split-Path $destinationPath -Parent
+
+        # Create directory if it doesn't exist
+        if (!(Test-Path $destinationDir)) {
+            New-Item -ItemType Directory -Path $destinationDir -Force | Out-Null
+        }
+
+        # Extract file
+        [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $destinationPath, $true)
+        $extractedCount++
+
+        # Immediately verify Runner.Listener.exe after extracting it
+        if ($entry.Name -eq "Runner.Listener.exe") {
+            Start-Sleep -Milliseconds 500  # Give filesystem time to sync
+            if (Test-Path $destinationPath) {
+                $listenerFound = $true
+                Write-Host "[SUCCESS] Runner.Listener.exe extracted and verified at: $destinationPath"
+                Write-Host "          File size: $(Get-Item $destinationPath).Length bytes"
+            } else {
+                Write-Host "[CRITICAL] Runner.Listener.exe was extracted but immediately disappeared from: $destinationPath"
+                Write-Host "           This suggests filesystem or security software interference"
+            }
+        }
+    }
+
+    $zip.Dispose()
+    Write-Host "Extraction complete - $extractedCount files extracted"
+
+    if (!$listenerFound) {
+        throw "Runner.Listener.exe was never extracted from ZIP (should not happen - we verified it exists)"
+    }
+
 } catch {
     throw "Failed to extract runner archive: $_"
 }
@@ -85,18 +126,51 @@ if ($totalFiles -gt 20) {
     Write-Host "  Total: $totalFiles files - $additionalFiles additional files not shown"
 }
 
-# Check Windows Defender quarantine (should not happen now with exclusion)
+# Check Windows Defender quarantine and provide detailed diagnostics
 Write-Host "Checking Windows Defender status..."
 $defenderStatus = Get-MpComputerStatus -ErrorAction SilentlyContinue
-if ($defenderStatus -and $defenderStatus.RealTimeProtectionEnabled) {
-    Write-Host "Windows Defender Real-Time Protection is ENABLED"
-    $recentThreats = Get-MpThreatDetection -ErrorAction SilentlyContinue | Where-Object { $_.Resources -like "*Runner*" }
+if ($defenderStatus) {
+    Write-Host "Windows Defender Real-Time Protection: $($defenderStatus.RealTimeProtectionEnabled)"
+    Write-Host "Windows Defender Behavior Monitoring: $($defenderStatus.BehaviorMonitorEnabled)"
+    Write-Host "Windows Defender Cloud Protection: $($defenderStatus.CloudProtectionEnabled)"
+
+    # Check for any recent threat detections
+    $recentThreats = Get-MpThreatDetection -ErrorAction SilentlyContinue
     if ($recentThreats) {
-        Write-Host "WARNING: Windows Defender detected threats related to Runner:"
-        $recentThreats | ForEach-Object { Write-Host "  - $($_.ThreatName): $($_.Resources)" }
+        $runnerThreats = $recentThreats | Where-Object { $_.Resources -like "*Runner*" -or $_.Resources -like "*$runnerInstallDir*" }
+        if ($runnerThreats) {
+            Write-Host ""
+            Write-Host "CRITICAL: Windows Defender QUARANTINED runner files despite exclusion:"
+            $runnerThreats | ForEach-Object {
+                Write-Host "  Threat: $($_.ThreatName)"
+                Write-Host "  Resource: $($_.Resources)"
+                Write-Host "  Action: $($_.ActionSuccess)"
+            }
+            Write-Host ""
+            Write-Host "Attempting to restore quarantined files..."
+            try {
+                Restore-MpThreat -ErrorAction Stop
+                Write-Host "Restore command executed - check if Runner.Listener.exe now exists"
+            } catch {
+                Write-Host "Failed to restore: $_"
+            }
+        } else {
+            Write-Host "No Runner-related threats detected"
+        }
     } else {
-        Write-Host "No Runner-related threats detected (exclusion working correctly)"
+        Write-Host "No recent threat detections found"
     }
+
+    # Check exclusion paths
+    $exclusions = Get-MpPreference | Select-Object -ExpandProperty ExclusionPath -ErrorAction SilentlyContinue
+    if ($exclusions -contains $runnerInstallDir) {
+        Write-Host "Confirmed: Exclusion path is active for $runnerInstallDir"
+    } else {
+        Write-Host "WARNING: Exclusion path NOT found in active exclusions!"
+        Write-Host "Active exclusions: $($exclusions -join ', ')"
+    }
+} else {
+    Write-Host "Windows Defender cmdlets not available (may be disabled)"
 }
 
 # Verify critical files exist

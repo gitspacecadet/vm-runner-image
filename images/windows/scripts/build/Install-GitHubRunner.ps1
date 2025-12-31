@@ -54,6 +54,32 @@ try {
     throw "Failed to extract runner archive: $_"
 }
 
+# Give Windows Defender time to process (if needed)
+Start-Sleep -Seconds 2
+
+# Immediately verify Runner.Listener.exe exists after extraction
+$listenerPath = Join-Path $runnerInstallDir "Runner.Listener.exe"
+if (Test-Path $listenerPath) {
+    $listenerSize = (Get-Item $listenerPath).Length
+    Write-Host "VERIFIED: Runner.Listener.exe extracted successfully - $listenerSize bytes"
+} else {
+    Write-Host "ERROR: Runner.Listener.exe not found immediately after extraction!"
+    Write-Host "This suggests Windows Defender quarantined the file despite exclusion"
+
+    # Try to restore from quarantine
+    Write-Host "Attempting to restore from quarantine..."
+    try {
+        Get-MpThreat | Where-Object { $_.Resources -like "*Runner.Listener*" } | ForEach-Object {
+            Write-Host "Found threat: $($_.ThreatName)"
+            Remove-MpThreat -ThreatID $_.ThreatID
+        }
+    } catch {
+        Write-Warning "Could not access quarantine: $_"
+    }
+
+    throw "Runner.Listener.exe not found after extraction - likely quarantined by Windows Defender"
+}
+
 # List what was actually extracted (diagnostic)
 Write-Host "Files extracted to $runnerInstallDir :"
 $extractedFiles = Get-ChildItem -Path $runnerInstallDir -Recurse -File | Select-Object -First 20 Name, Length

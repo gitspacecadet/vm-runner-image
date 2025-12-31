@@ -89,6 +89,21 @@ $cliTools.AddToolVersion("Azure CLI", $(Get-AzureCLIVersion))
 $cliTools.AddToolVersion("Azure DevOps CLI extension", $(Get-AzureDevopsExtVersion))
 $cliTools.AddToolVersion("GitHub CLI", $(Get-GHVersion))
 
+# VMSS Setup Scripts (for runtime initialization)
+$vmssScripts = $installedSoftware.AddHeader("VMSS Setup Scripts")
+$vmssScriptsDir = "C:\ProgramData\vmss-scripts"
+if (Test-Path $vmssScriptsDir) {
+    $metadataPath = Join-Path $vmssScriptsDir "vmss-scripts-metadata.json"
+    if (Test-Path $metadataPath) {
+        $metadata = Get-Content $metadataPath -Raw | ConvertFrom-Json
+        $vmssScripts.AddToolVersion("Initialize-VmRunner.ps1", "v$($metadata.ScriptVersion) - Pre-staged for VMSS Custom Script Extension")
+        $vmssScripts.AddToolVersion("Test-VmssSetup.ps1", "Validation and diagnostic tool")
+        $vmssScripts.AddToolVersion("Remove-Runner.ps1", "Graceful unregistration for scale-down")
+        $vmssScripts.AddToolVersion("Location", $vmssScriptsDir)
+        $vmssScripts.AddNote("These scripts are for VMSS instance initialization, not for use during image build.")
+    }
+}
+
 # Shells
 $installedSoftware.AddHeader("Shells").AddTable($(Get-ShellTarget))
 

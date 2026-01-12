@@ -70,14 +70,14 @@ $metadata = @{
         GitHubRunner = "Pre-installed at C:\ProgramData\runner"
         PowerShell = "5.1 or higher"
         AzureServices = @(
-            "Azure Metadata Service (169.254.169.254)",
-            "Azure Key Vault (optional, for PAT retrieval)",
-            "GitHub API (api.github.com)"
+            "Azure Metadata Service - 169.254.169.254",
+            "Azure Key Vault - optional, for PAT retrieval",
+            "GitHub API - api.github.com"
         )
     }
     Features = @{
         KeyVaultIntegration = "Azure Key Vault PAT retrieval via Managed Identity"
-        RetryLogic = "GitHub API calls with exponential backoff (3 retries)"
+        RetryLogic = "GitHub API calls with exponential backoff - 3 retries"
         EnhancedDiagnostics = "Troubleshooting hints in error messages"
         ValidationTool = "Test-VmssSetup.ps1 for pre-flight checks"
         GracefulCleanup = "Remove-Runner.ps1 for scale-down events"

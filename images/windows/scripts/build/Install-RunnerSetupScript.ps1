@@ -90,6 +90,9 @@ $metadata | Out-File -FilePath $metadataPath -Encoding utf8 -Force
 Write-Host "Metadata written to: $metadataPath"
 
 # Create README for VMSS administrators
+# NOTE: Temporarily disabled due to Packer here-string handling issues
+# TODO: Create README.md as a separate static file instead
+<#
 Write-Host "Creating README..."
 $readme = @"
 # VMSS Runner Setup Scripts
@@ -270,6 +273,7 @@ For issues or questions:
 $readmePath = Join-Path $vmssScriptsDir "README.md"
 $readme | Out-File -FilePath $readmePath -Encoding utf8 -Force
 Write-Host "README written to: $readmePath"
+#>
 
 # Verify all expected files are present
 Write-Host "Verifying installation..."

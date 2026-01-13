@@ -49,7 +49,11 @@ build {
       "New-Item -Type Directory -Path '${var.helper_script_folder}\\TestsHelpers\\'",
       "Move-Item '${var.image_folder}\\scripts\\tests\\Helpers.psm1' '${var.helper_script_folder}\\TestsHelpers\\TestsHelpers.psm1'",
       "Move-Item '${var.image_folder}\\scripts\\tests' '${var.image_folder}\\tests'",
+      # Preserve VMSS runner scripts before deleting scripts directory
+      "if (Test-Path '${var.image_folder}\\scripts\\vmss') { Move-Item '${var.image_folder}\\scripts\\vmss' '${var.image_folder}\\vmss-source' }",
       "Remove-Item -Recurse '${var.image_folder}\\scripts'",
+      # Restore VMSS scripts for Install-RunnerSetupScript.ps1 to find
+      "if (Test-Path '${var.image_folder}\\vmss-source') { New-Item -Type Directory -Path '${var.image_folder}\\scripts' -Force | Out-Null; Move-Item '${var.image_folder}\\vmss-source' '${var.image_folder}\\scripts\\vmss' }",
       # USE OUR MINIMAL TOOLSET instead of full toolset-2022.json
       "Move-Item '${var.image_folder}\\toolsets\\toolset-2022-algo.json' '${var.image_folder}\\toolset.json'",
       "Remove-Item -Recurse '${var.image_folder}\\toolsets'"

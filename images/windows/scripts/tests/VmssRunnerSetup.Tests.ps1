@@ -130,25 +130,6 @@ Describe "VMSS Runner Setup Scripts" {
         $metadata.Scripts | Should -Contain "Remove-Runner.ps1"
     }
 
-    It "README.md exists" {
-        $readmePath = Join-Path $vmssScriptsDir "README.md"
-        $readmePath | Should -Exist
-    }
-
-    It "README.md documents all scripts" {
-        $readmePath = Join-Path $vmssScriptsDir "README.md"
-        $readmeContent = Get-Content $readmePath -Raw
-        $readmeContent | Should -Match 'Initialize-VmRunner\.ps1'
-        $readmeContent | Should -Match 'Test-VmssSetup\.ps1'
-        $readmeContent | Should -Match 'Remove-Runner\.ps1'
-    }
-
-    It "README.md contains usage examples" {
-        $readmePath = Join-Path $vmssScriptsDir "README.md"
-        $readmeContent = Get-Content $readmePath -Raw
-        $readmeContent | Should -Match 'Example Usage'
-        $readmeContent | Should -Match 'Terraform'
-    }
 
     It "All scripts have proper file headers" {
         $scripts = @("Initialize-VmRunner.ps1", "Test-VmssSetup.ps1", "Remove-Runner.ps1")

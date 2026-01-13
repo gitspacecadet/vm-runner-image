@@ -95,7 +95,6 @@ $expectedFiles = @(
     "Initialize-VmRunner.ps1",
     "Test-VmssSetup.ps1",
     "Remove-Runner.ps1",
-    "README.md",
     "vmss-scripts-metadata.json"
 )
 

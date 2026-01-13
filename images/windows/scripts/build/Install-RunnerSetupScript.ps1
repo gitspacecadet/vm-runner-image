@@ -53,7 +53,7 @@ foreach ($scriptName in $scripts) {
         throw "$scriptName has PowerShell syntax errors"
     }
 
-    Write-Host "  ✓ Copied and validated: $scriptName"
+    Write-Host "  [OK] Copied and validated: $scriptName"
     $copiedScripts += $scriptName
 }
 
@@ -117,7 +117,7 @@ Write-Host "All files verified present"
 Write-Host "Installed files in $vmssScriptsDir :"
 Get-ChildItem -Path $vmssScriptsDir | ForEach-Object {
     $size = if ($_.PSIsContainer) { "DIR" } else { "$($_.Length) bytes" }
-    Write-Host "  - $($_.Name) ($size)"
+    Write-Host "  - $($_.Name) - $size"
 }
 
 Write-Host "VMSS runner setup scripts installation complete"

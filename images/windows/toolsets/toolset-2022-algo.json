@@ -39,7 +39,8 @@
             { "name": "7zip.install" },
             { "name": "jq" },
             { "name": "NuGet.CommandLine" },
-            { "name": "dotnet" }
+            { "name": "dotnet" },
+            { "name": "vcredist140" }
         ]
     },
     "dotnet": {

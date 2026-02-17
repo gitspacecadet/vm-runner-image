@@ -38,8 +38,17 @@
         "common_packages": [
             { "name": "7zip.install" },
             { "name": "jq" },
-            { "name": "NuGet.CommandLine" }
+            { "name": "NuGet.CommandLine" },
+            { "name": "dotnet" }
         ]
+    },
+    "dotnet": {
+        "versions": [
+            "9.0",
+            "10.0"
+        ],
+        "tools": [],
+        "warmup": false
     },
     "node": {
         "default": "20.*"

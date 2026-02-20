@@ -129,14 +129,20 @@ jobs:
           $VersionResolved = $false
 
           # ----------------------------------------------------------------
-          # 3. Resolve BC artifact version via bca-url-proxy (no module needed)
-          #    Not available for NextMajor/NextMinor (requires insider SAS)
+          # 3. Resolve BC artifact version via BcContainerHelper
+          #    Same approach as Create-BcImage.ps1 — guarantees version matches what Packer bakes in.
+          #    Not available for NextMajor/NextMinor (requires insider SAS token).
           # ----------------------------------------------------------------
           if ($BcSelect -notin @('NextMajor', 'NextMinor')) {
             try {
-              $ProxyUrl = "https://bca-url-proxy.azurewebsites.net/bca-url/$($BcType.ToLower())/$BcCountry`?select=$BcSelect&DoNotRedirect=true"
-              Write-Host "Resolving BC artifact URL: $ProxyUrl"
-              $ArtifactUrl = (Invoke-RestMethod -Uri $ProxyUrl -TimeoutSec 30).Trim()
+              if (-not (Get-Module -ListAvailable -Name BcContainerHelper)) {
+                Write-Host "Installing BcContainerHelper"
+                Install-Module -Name BcContainerHelper -Force -AllowClobber -Scope CurrentUser | Out-Null
+              }
+              Import-Module BcContainerHelper -Force -DisableNameChecking
+
+              Write-Host "Resolving BC artifact URL (type=$BcType, country=$BcCountry, select=$BcSelect)"
+              $ArtifactUrl = Get-BCArtifactUrl -type $BcType -country $BcCountry -select $BcSelect
               Write-Host "Artifact URL: $ArtifactUrl"
 
               # Version is second-to-last path segment: .../27.0.38460.41755/us

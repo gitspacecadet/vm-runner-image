@@ -286,6 +286,26 @@ jobs:
           retention-days: 90
           if-no-files-found: warn
 
+      - name: Write build outputs manifest
+        if: success()
+        shell: pwsh
+        run: |
+          $lines = @(
+            "image_version=${{ steps.names.outputs.image_version }}",
+            "bc_version=${{ steps.names.outputs.bc_version }}",
+            "build_timestamp=${{ steps.names.outputs.build_timestamp }}",
+            "image_name=${{ steps.names.outputs.image_name }}"
+          )
+          $lines | Out-File -FilePath "$env:RUNNER_TEMP\build-outputs.txt" -Encoding utf8
+
+      - name: Upload build-outputs artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-outputs
+          path: ${{ runner.temp }}/build-outputs.txt
+          retention-days: 90
+
   # ============================================================================
   # Job 2: Verify Gallery Image
   # ============================================================================
@@ -409,86 +429,7 @@ jobs:
           "| **Resource Group** | ${{ vars.AZURE_RESOURCE_GROUP }} |" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
 
   # ============================================================================
-  # Job 4: Update VMSS Image Reference
-  # Flips the VMSS model to the new gallery image version so that all future
-  # scale-out instances pick it up automatically.
-  # Existing running instances are NOT deleted — they finish their current jobs
-  # and are replaced naturally by GitHub's autoscaler.
-  # ============================================================================
-  update-vmss:
-    name: Update VMSS Image Reference
-    needs: [build-image, verify-gallery, create-release]
-    runs-on: self-hosted
-    if: success()
-    timeout-minutes: 10
-
-    steps:
-      - name: Azure Login
-        uses: azure/login@v2
-        with:
-          creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
-
-      - name: Update VMSS to new image version
-        shell: pwsh
-        run: |
-          $ImageVersion    = "${{ needs.build-image.outputs.image_version }}"
-          $SubscriptionId  = "${{ secrets.AZURE_SUBSCRIPTION_ID }}"
-          $GalleryRg       = "${{ vars.AZURE_RESOURCE_GROUP }}"
-          $GalleryName     = "${{ vars.AZURE_GALLERY_NAME }}"
-          $ImageDefinition = "${{ vars.AZURE_GALLERY_IMAGE_NAME }}"
-          $VmssRg   = "${{ vars.AZ_VMSS_RG }}"
-          $VmssName = "${{ vars.AZ_VMSS_NAME }}"
-
-          $ImageId = "/subscriptions/$SubscriptionId/resourceGroups/$GalleryRg/providers/Microsoft.Compute/galleries/$GalleryName/images/$ImageDefinition/versions/$ImageVersion"
-
-          Write-Host "Updating VMSS '$VmssName' (rg: $VmssRg)"
-          Write-Host "  Image version : $ImageVersion"
-          Write-Host "  BC version    : ${{ needs.build-image.outputs.bc_version }}"
-          Write-Host "  Image ID      : $ImageId"
-
-          az vmss update `
-            --resource-group $VmssRg `
-            --name $VmssName `
-            --set virtualMachineProfile.storageProfile.imageReference.id="$ImageId" `
-            --set virtualMachineProfile.osProfile.windowsConfiguration.patchSettings.enableHotpatching=false `
-            --set virtualMachineProfile.storageProfile.osDisk.diskSizeGB=256
-
-          if ($LASTEXITCODE -ne 0) {
-            throw "VMSS update failed (exit $LASTEXITCODE)"
-          }
-
-          # Remove diskControllerType if present (Gen1 compatibility).
-          # The property may not exist at all — suppress error if missing.
-          Write-Host "Removing diskControllerType (if present)..."
-          az vmss update `
-            --resource-group $VmssRg `
-            --name $VmssName `
-            --remove virtualMachineProfile.storageProfile.diskControllerType 2>$null
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host "Note: diskControllerType not present on VMSS model — no action needed."
-          }
-          # Reset LASTEXITCODE — GitHub Actions pwsh wrapper exits with it,
-          # and the best-effort remove above may leave it non-zero.
-          $global:LASTEXITCODE = 0
-
-          Write-Host "VMSS model updated successfully."
-          Write-Host "New scale-out instances will use version $ImageVersion."
-          Write-Host "Existing running instances are unaffected until replaced by autoscaler."
-
-      - name: Add to summary
-        shell: pwsh
-        run: |
-          "" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
-          "## VMSS Updated" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
-          "" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
-          "| Property | Value |" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
-          "|----------|-------|" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
-          "| **VMSS** | ${{ vars.AZ_VMSS_NAME }} (${{ vars.AZ_VMSS_RG }}) |" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
-          "| **New Image Version** | ${{ needs.build-image.outputs.image_version }} |" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
-          "| **BC Version** | ${{ needs.build-image.outputs.bc_version }} |" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
-
-  # ============================================================================
-  # Job 5: Cleanup Temp Resources (runs on failure/cancellation)
+  # Job 4: Cleanup Temp Resources (runs on failure/cancellation)
   # ============================================================================
   cleanup:
     name: Cleanup Temp Resources

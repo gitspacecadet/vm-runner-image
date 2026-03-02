@@ -467,6 +467,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             Write-Host "Note: diskControllerType not present on VMSS model — no action needed."
           }
+          # Reset LASTEXITCODE — GitHub Actions pwsh wrapper exits with it,
+          # and the best-effort remove above may leave it non-zero.
+          $global:LASTEXITCODE = 0
 
           Write-Host "VMSS model updated successfully."
           Write-Host "New scale-out instances will use version $ImageVersion."

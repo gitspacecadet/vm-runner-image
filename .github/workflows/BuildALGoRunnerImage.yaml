@@ -451,11 +451,21 @@ jobs:
             --name $VmssName `
             --set virtualMachineProfile.storageProfile.imageReference.id="$ImageId" `
             --set virtualMachineProfile.osProfile.windowsConfiguration.patchSettings.enableHotpatching=false `
-            --set virtualMachineProfile.storageProfile.osDisk.diskSizeGB=256 `
-            --remove virtualMachineProfile.storageProfile.diskControllerType
+            --set virtualMachineProfile.storageProfile.osDisk.diskSizeGB=256
 
           if ($LASTEXITCODE -ne 0) {
             throw "VMSS update failed (exit $LASTEXITCODE)"
+          }
+
+          # Remove diskControllerType if present (Gen1 compatibility).
+          # The property may not exist at all — suppress error if missing.
+          Write-Host "Removing diskControllerType (if present)..."
+          az vmss update `
+            --resource-group $VmssRg `
+            --name $VmssName `
+            --remove virtualMachineProfile.storageProfile.diskControllerType 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "Note: diskControllerType not present on VMSS model — no action needed."
           }
 
           Write-Host "VMSS model updated successfully."

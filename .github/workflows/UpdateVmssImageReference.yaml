@@ -1,0 +1,248 @@
+################################################################################
+# Update VMSS Image Reference
+#
+# Flips the VMSS model to a new gallery image version so that future
+# scale-out instances pick it up automatically.
+# Existing running instances are NOT deleted unless delete_instances = true.
+#
+# Triggers:
+#   1. Automatically after a successful "Build AL-Go Runner Image" run
+#   2. Manually (workflow_dispatch) — provide image_version or leave blank
+#      to auto-detect from the latest successful build
+################################################################################
+
+name: Update VMSS Image Reference
+
+on:
+  workflow_run:
+    workflows: ["Build AL-Go Runner Image"]
+    types: [completed]
+
+  workflow_dispatch:
+    inputs:
+      image_version:
+        description: 'Gallery image version (e.g. 27.45366.46918). Leave blank to auto-detect from latest successful build.'
+        required: false
+        default: ''
+      delete_instances:
+        description: 'Delete existing VMSS instances after model update (new ones will start fresh with updated image)'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: read   # required for actions/download-artifact with run-id
+
+jobs:
+  update-vmss:
+    name: Update VMSS Image Reference
+    runs-on: self-hosted
+    # workflow_run fires on every completion — only proceed if the build succeeded
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    timeout-minutes: 15
+
+    steps:
+      # -------------------------------------------------------------------------
+      # Determine which run's artifact to pull the version from.
+      # Skipped when image_version is supplied directly.
+      # -------------------------------------------------------------------------
+      - name: Determine source run ID
+        id: run-id
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if ("${{ inputs.image_version }}") {
+            Write-Host "Image version provided directly: ${{ inputs.image_version }}"
+            "run_id=" >> $env:GITHUB_OUTPUT
+            "source=input" >> $env:GITHUB_OUTPUT
+          } elseif ("${{ github.event_name }}" -eq "workflow_run") {
+            $RunId = "${{ github.event.workflow_run.id }}"
+            Write-Host "Auto-triggered by workflow_run — build run ID: $RunId"
+            "run_id=$RunId" >> $env:GITHUB_OUTPUT
+            "source=workflow_run" >> $env:GITHUB_OUTPUT
+          } else {
+            Write-Host "Querying for latest successful Build AL-Go Runner Image run..."
+            $response = gh api "/repos/${{ github.repository }}/actions/workflows/BuildALGoRunnerImage.yaml/runs?status=success&per_page=1" | ConvertFrom-Json
+            if (-not $response.workflow_runs -or $response.workflow_runs.Count -eq 0) {
+              throw "No successful Build AL-Go Runner Image runs found"
+            }
+            $RunId = $response.workflow_runs[0].id.ToString()
+            Write-Host "Latest successful run: $RunId (created: $($response.workflow_runs[0].created_at))"
+            "run_id=$RunId" >> $env:GITHUB_OUTPUT
+            "source=latest_build" >> $env:GITHUB_OUTPUT
+          }
+
+      # -------------------------------------------------------------------------
+      # Download build-outputs artifact from the identified run.
+      # Skipped when image_version was supplied directly.
+      # -------------------------------------------------------------------------
+      - name: Download build-outputs artifact
+        if: steps.run-id.outputs.run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: build-outputs
+          run-id: ${{ steps.run-id.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: ./build-outputs
+
+      # -------------------------------------------------------------------------
+      # Resolve the final image version (from input or artifact).
+      # -------------------------------------------------------------------------
+      - name: Resolve image version
+        id: version
+        shell: pwsh
+        run: |
+          $ImageVersion = "${{ inputs.image_version }}"
+          $BcVersion    = ""
+          $BuildAt      = ""
+          $ImageName    = ""
+
+          if (-not $ImageVersion) {
+            $contentPath = "./build-outputs/build-outputs.txt"
+            if (-not (Test-Path $contentPath)) {
+              throw "build-outputs.txt not found — cannot resolve image version"
+            }
+            $content      = Get-Content $contentPath
+            $ImageVersion = ($content | Where-Object { $_ -match '^image_version=' })    -replace '^image_version=', ''
+            $BcVersion    = ($content | Where-Object { $_ -match '^bc_version=' })       -replace '^bc_version=', ''
+            $BuildAt      = ($content | Where-Object { $_ -match '^build_timestamp=' })  -replace '^build_timestamp=', ''
+            $ImageName    = ($content | Where-Object { $_ -match '^image_name=' })       -replace '^image_name=', ''
+
+            if (-not $ImageVersion) {
+              throw "image_version not found in build-outputs artifact"
+            }
+          }
+
+          Write-Host "Image version : $ImageVersion"
+          if ($BcVersion) { Write-Host "BC version    : $BcVersion" }
+          if ($BuildAt)   { Write-Host "Built at      : $BuildAt" }
+
+          "image_version=$ImageVersion" >> $env:GITHUB_OUTPUT
+          "bc_version=$BcVersion"       >> $env:GITHUB_OUTPUT
+          "build_at=$BuildAt"           >> $env:GITHUB_OUTPUT
+          "image_name=$ImageName"       >> $env:GITHUB_OUTPUT
+
+      # -------------------------------------------------------------------------
+      # Azure Login
+      # -------------------------------------------------------------------------
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
+
+      # -------------------------------------------------------------------------
+      # Update VMSS model to point at the new image version.
+      # -------------------------------------------------------------------------
+      - name: Update VMSS image reference
+        id: vmss-update
+        shell: pwsh
+        run: |
+          $ImageVersion    = "${{ steps.version.outputs.image_version }}"
+          $SubscriptionId  = "${{ secrets.AZURE_SUBSCRIPTION_ID }}"
+          $GalleryRg       = "${{ vars.AZURE_RESOURCE_GROUP }}"
+          $GalleryName     = "${{ vars.AZURE_GALLERY_NAME }}"
+          $ImageDefinition = "${{ vars.AZURE_GALLERY_IMAGE_NAME }}"
+          $VmssRg          = "${{ vars.AZ_VMSS_RG }}"
+          $VmssName        = "${{ vars.AZ_VMSS_NAME }}"
+
+          $ImageId = "/subscriptions/$SubscriptionId/resourceGroups/$GalleryRg/providers/Microsoft.Compute/galleries/$GalleryName/images/$ImageDefinition/versions/$ImageVersion"
+
+          Write-Host "Updating VMSS '$VmssName' (rg: $VmssRg)"
+          Write-Host "  Image version : $ImageVersion"
+          Write-Host "  BC version    : ${{ steps.version.outputs.bc_version }}"
+          Write-Host "  Image ID      : $ImageId"
+
+          az vmss update `
+            --resource-group $VmssRg `
+            --name $VmssName `
+            --set virtualMachineProfile.storageProfile.imageReference.id="$ImageId" `
+            --set virtualMachineProfile.osProfile.windowsConfiguration.patchSettings.enableHotpatching=false `
+            --set virtualMachineProfile.storageProfile.osDisk.diskSizeGB=256
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "VMSS update failed (exit $LASTEXITCODE)"
+          }
+
+          # Remove diskControllerType if present (Gen1 compatibility).
+          # The property may not exist — suppress error if missing.
+          Write-Host "Removing diskControllerType (if present)..."
+          az vmss update `
+            --resource-group $VmssRg `
+            --name $VmssName `
+            --remove virtualMachineProfile.storageProfile.diskControllerType 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "Note: diskControllerType not present on VMSS model — no action needed."
+          }
+          # Reset LASTEXITCODE — pwsh wrapper exits with it; the best-effort
+          # remove above may leave it non-zero.
+          $global:LASTEXITCODE = 0
+
+          Write-Host "VMSS model updated — new scale-out instances will use version $ImageVersion."
+          Write-Host "Existing running instances are unaffected until replaced by autoscaler."
+
+      # -------------------------------------------------------------------------
+      # Optionally delete existing VMSS instances so they are immediately
+      # replaced with new ones running the updated image.
+      # -------------------------------------------------------------------------
+      - name: Delete existing VMSS instances
+        if: inputs.delete_instances
+        shell: pwsh
+        run: |
+          $VmssRg   = "${{ vars.AZ_VMSS_RG }}"
+          $VmssName = "${{ vars.AZ_VMSS_NAME }}"
+
+          Write-Host "Querying existing instances in '$VmssName'..."
+          $instances = az vmss list-instances `
+            --resource-group $VmssRg `
+            --name $VmssName `
+            --query "[].{id:instanceId, name:name}" `
+            --output json 2>$null | ConvertFrom-Json
+
+          if (-not $instances -or $instances.Count -eq 0) {
+            Write-Host "No existing instances found — nothing to delete."
+            return
+          }
+
+          Write-Host "Found $($instances.Count) instance(s):"
+          foreach ($inst in $instances) {
+            Write-Host "  - $($inst.name) (ID: $($inst.id))"
+          }
+
+          $instanceIds = ($instances | ForEach-Object { $_.id }) -join " "
+          az vmss delete-instances `
+            --resource-group $VmssRg `
+            --name $VmssName `
+            --instance-ids $instanceIds
+
+          if ($LASTEXITCODE -ne 0) {
+            Write-Warning "Instance deletion failed (exit $LASTEXITCODE)"
+          } else {
+            Write-Host "Deleted $($instances.Count) instance(s). Replacements will use image ${{ steps.version.outputs.image_version }}."
+          }
+          $global:LASTEXITCODE = 0
+
+      # -------------------------------------------------------------------------
+      # Job summary
+      # -------------------------------------------------------------------------
+      - name: Job summary
+        if: always()
+        shell: pwsh
+        run: |
+          $UpdateStatus  = if ("${{ steps.vmss-update.outcome }}" -eq "success") { "Success" } else { "Failed" }
+          $DeleteStatus  = if ("${{ inputs.delete_instances }}" -eq "true") { "Yes" } else { "No" }
+          $TriggerSource = "${{ steps.run-id.outputs.source }}"
+          if (-not $TriggerSource) { $TriggerSource = "input" }
+
+          "" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "## VMSS Image Reference — $UpdateStatus" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "| Property | Value |" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "|----------|-------|" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "| **VMSS** | ${{ vars.AZ_VMSS_NAME }} (${{ vars.AZ_VMSS_RG }}) |" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "| **New Image Version** | ${{ steps.version.outputs.image_version }} |" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "| **BC Version** | ${{ steps.version.outputs.bc_version }} |" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "| **Built At** | ${{ steps.version.outputs.build_at }} |" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "| **Trigger** | $TriggerSource |" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "| **Instances Deleted** | $DeleteStatus |" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append

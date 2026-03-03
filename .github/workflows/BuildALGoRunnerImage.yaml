@@ -310,13 +310,15 @@ jobs:
           Write-Host "   -> BC Country: ${{ inputs.bc_country }}"
           Write-Host "   -> BC Select: ${{ inputs.bc_select }}"
 
-          $ForceFlag = if ("${{ inputs.force_rebuild }}" -eq "true") { @("-force") } else { @() }
-          packer build `
-            -only="windows-2022-algo.azure-arm.image" `
-            -color=false `
-            -on-error=abort `
-            @ForceFlag `
-            .
+          $packerArgs = @(
+            "build",
+            "-only=windows-2022-algo.azure-arm.image",
+            "-color=false",
+            "-on-error=abort"
+          )
+          if ("${{ inputs.force_rebuild }}" -eq "true") { $packerArgs += "-force" }
+          $packerArgs += "."
+          & packer @packerArgs
 
           if ($LASTEXITCODE -ne 0) {
             Write-Error "Packer build failed"

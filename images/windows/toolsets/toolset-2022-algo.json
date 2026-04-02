@@ -12,45 +12,27 @@
     ],
     "powershellModules": [
         { "name": "DockerMsftProvider" },
+        { "name": "MarkdownPS" },
         { "name": "Pester" },
         { "name": "PowerShellGet" },
-        { "name": "PSScriptAnalyzer" }
-    ],
-    "azureModules": [
-        {
-            "name": "az",
-            "versions": [
-                "12.5.0"
-            ],
-            "zip_versions": []
-        }
+        { "name": "PSScriptAnalyzer" },
+        { "name": "PSWindowsUpdate" }
     ],
     "windowsFeatures": [
         { "name": "Containers" },
         { "name": "Microsoft-Windows-Subsystem-Linux", "optionalFeature": true },
         { "name": "VirtualMachinePlatform", "optionalFeature": true },
-        { "name": "NET-Framework-45-Features", "includeAllSubFeatures": true },
-        { "name": "NET-Framework-Features", "includeAllSubFeatures": true },
         { "name": "Hyper-V", "includeAllSubFeatures": true },
         { "name": "Hyper-V-PowerShell" },
         { "name": "Wireless-Networking" }
     ],
     "docker": {
         "images": [
-            "mcr.microsoft.com/windows/servercore:ltsc2022",
             "mcr.microsoft.com/businesscentral:ltsc2022"
         ],
         "components": {
-            "docker": "27.5.1",
-            "compose": "2.32.2"
+            "docker": "27.5.1"
         }
-    },
-    "dotnet": {
-        "versions": [
-            "8.0"
-        ],
-        "tools": [],
-        "warmup": false
     },
     "choco": {
         "common_packages": [

@@ -168,9 +168,17 @@ build {
     restart_timeout = "10m"
   }
 
+  # Phase 9a: Azure PowerShell Az modules (Key Vault secrets, AzCopy auth, etc.)
+  # Installed in its own provisioner to isolate the long-running Save-Module
+  # download from the rest of Phase 9.
+  provisioner "powershell" {
+    environment_vars = ["IMAGE_FOLDER=${var.image_folder}", "TEMP_DIR=${var.temp_dir}"]
+    scripts = [
+      "${path.root}/../scripts/build/Install-PowershellAzModules.ps1"
+    ]
+  }
+
   # Phase 9: Core tooling for AL-Go
-  # NOTE: Azure Az modules removed - not needed for standard BC AL-Go workflows
-  # Re-add Install-PowershellAzModules.ps1 if using Azure Key Vault for secrets
   provisioner "powershell" {
     environment_vars = ["IMAGE_FOLDER=${var.image_folder}", "TEMP_DIR=${var.temp_dir}"]
     scripts = [

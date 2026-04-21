@@ -18,6 +18,16 @@
         { "name": "PSScriptAnalyzer" },
         { "name": "PSWindowsUpdate" }
     ],
+    "azureModules": [
+        {
+            "name": "Az",
+            "versions": [
+                "12.3.0"
+            ],
+            "zip_versions": [],
+            "default": "12.3.0"
+        }
+    ],
     "windowsFeatures": [
         { "name": "Containers" },
         { "name": "Microsoft-Windows-Subsystem-Linux", "optionalFeature": true },

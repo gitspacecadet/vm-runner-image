@@ -20,12 +20,11 @@
     ],
     "azureModules": [
         {
-            "name": "Az",
+            "name": "az",
             "versions": [
-                "12.3.0"
+                "12.5.0"
             ],
-            "zip_versions": [],
-            "default": "12.3.0"
+            "zip_versions": []
         }
     ],
     "windowsFeatures": [

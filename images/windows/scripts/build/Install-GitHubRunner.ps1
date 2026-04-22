@@ -14,8 +14,27 @@
 
 Write-Host "Downloading GitHub Actions Runner ZIP for VMSS..."
 
-# Runner version (update as needed)
-$runnerVersion = "2.321.0"
+# Resolve latest runner release from the GitHub API at build time.
+# Mirrors GitHub's documented self-hosted setup flow; recorded in
+# runner-metadata.json below for downstream traceability.
+Write-Host "Resolving latest actions/runner release..."
+$apiHeaders = @{
+    'User-Agent' = 'packer-image-builder'
+    'Accept'     = 'application/vnd.github+json'
+}
+if ($env:GITHUB_TOKEN) {
+    $apiHeaders['Authorization'] = "Bearer $env:GITHUB_TOKEN"
+}
+$latestRelease = Invoke-RestMethod `
+    -Uri 'https://api.github.com/repos/actions/runner/releases/latest' `
+    -Headers $apiHeaders `
+    -UseBasicParsing `
+    -ErrorAction Stop
+$runnerVersion = $latestRelease.tag_name.TrimStart('v')
+if ([string]::IsNullOrWhiteSpace($runnerVersion)) {
+    throw "Failed to resolve runner version from GitHub API response."
+}
+
 $runnerInstallDir = "C:\ProgramData\runner"
 
 Write-Host "Runner version: $runnerVersion"

@@ -9,7 +9,14 @@
 Describe "GitHub Actions Runner ZIP" {
     BeforeAll {
         $runnerPath = "C:\ProgramData\runner"
-        $runnerVersion = "2.321.0"
+        $metadataPath = Join-Path $runnerPath "runner-metadata.json"
+        if (-not (Test-Path $metadataPath)) {
+            throw "Runner metadata not found at $metadataPath — Install-GitHubRunner.ps1 did not complete."
+        }
+        $runnerVersion = (Get-Content -Path $metadataPath -Raw | ConvertFrom-Json).Version
+        if ([string]::IsNullOrWhiteSpace($runnerVersion)) {
+            throw "Version field missing or empty in $metadataPath."
+        }
         $expectedZipName = "actions-runner-win-x64-$runnerVersion.zip"
     }
 

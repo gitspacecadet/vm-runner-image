@@ -33,6 +33,7 @@ source "azure-arm" "image" {
   winrm_expiration_time                  = var.winrm_expiration_time
   winrm_insecure                         = "true"
   winrm_use_ssl                          = "true"
+  winrm_timeout                          = var.winrm_timeout
   winrm_username                         = var.winrm_username
 
   shared_image_gallery_destination {

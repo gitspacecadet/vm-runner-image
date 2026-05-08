@@ -41,6 +41,11 @@ on:
           - Daily
           - NextMajor
           - NextMinor
+      force_rebuild:
+        description: 'Force rebuild even if this gallery image version already exists'
+        required: false
+        type: boolean
+        default: false
 
 # Minimal global permissions
 permissions:
@@ -68,7 +73,10 @@ jobs:
     outputs:
       image_name: ${{ steps.names.outputs.image_name }}
       image_version: ${{ steps.names.outputs.image_version }}
+      bc_version: ${{ steps.names.outputs.bc_version }}
+      build_timestamp: ${{ steps.names.outputs.build_timestamp }}
       temp_rg_name: ${{ steps.names.outputs.temp_rg_name }}
+      skip_build: ${{ steps.precheck.outputs.skip_build }}
 
     steps:
       - name: Checkout repository
@@ -79,19 +87,124 @@ jobs:
         with:
           version: latest
 
-      - name: Generate image names
+      # ========================================================================
+      # Security: Mask sensitive patterns in Packer output
+      # ========================================================================
+      - name: Setup output masking
+        id: masking
+        shell: pwsh
+        run: |
+          # Mask patterns that could leak infrastructure details
+          # These are dynamically generated during build and appear in Packer logs
+          Write-Host "Setting up output masking for security..."
+
+          # Mask Key Vault URL patterns (vault.azure.net secrets)
+          # Example: https://pkrkv*.vault.azure.net/secrets/*
+          Write-Host "::add-mask::vault.azure.net"
+
+          # Get the runner's public IP and mask it
+          # This prevents exposing the build VM's IP address in logs
+          try {
+            $publicIp = (Invoke-RestMethod -Uri 'https://api.ipify.org' -TimeoutSec 10)
+            if ($publicIp -match '^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$') {
+              Write-Host "::add-mask::$publicIp"
+              Write-Host "Masked runner public IP"
+            }
+          } catch {
+            Write-Host "Could not determine public IP for masking (non-critical)"
+          }
+
+      - name: Resolve BC version and generate image names
         id: names
         shell: pwsh
         run: |
-          $ImageName = "algo-runner-win22-$(Get-Date -Format 'yyyyMMdd.HHmm')"
-          $ImageVersion = "1.$(Get-Date -Format 'yyyyMMdd.HHmm')"
-          # Generate temp RG name: base-temp-<random6>
+          # ----------------------------------------------------------------
+          # 1. Build timestamp (metadata only - not used as version)
+          # ----------------------------------------------------------------
+          $BuildTimestamp = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm UTC')
+
+          # ----------------------------------------------------------------
+          # 2. Read BC inputs with defaults (handles scheduled/empty triggers)
+          # ----------------------------------------------------------------
+          $BcType    = if ("${{ inputs.bc_type }}")    { "${{ inputs.bc_type }}" }    else { 'Sandbox' }
+          $BcCountry = if ("${{ inputs.bc_country }}") { "${{ inputs.bc_country }}" } else { 'us' }
+          $BcSelect  = if ("${{ inputs.bc_select }}")  { "${{ inputs.bc_select }}" }  else { 'Latest' }
+
+          $BcVersion       = $null
+          $GalleryVersion  = $null
+          $VersionResolved = $false
+
+          # ----------------------------------------------------------------
+          # 3. Resolve BC artifact version via BcContainerHelper
+          #    Same approach as Create-BcImage.ps1 — guarantees version matches what Packer bakes in.
+          #    Not available for NextMajor/NextMinor (requires insider SAS token).
+          # ----------------------------------------------------------------
+          if ($BcSelect -notin @('NextMajor', 'NextMinor')) {
+            try {
+              if (-not (Get-Module -ListAvailable -Name BcContainerHelper)) {
+                Write-Host "Installing BcContainerHelper"
+                Install-Module -Name BcContainerHelper -Force -AllowClobber -Scope CurrentUser | Out-Null
+              }
+              Import-Module BcContainerHelper -Force -DisableNameChecking
+
+              Write-Host "Resolving BC artifact URL (type=$BcType, country=$BcCountry, select=$BcSelect)"
+              $ArtifactUrl = Get-BCArtifactUrl -type $BcType -country $BcCountry -select $BcSelect
+              Write-Host "Artifact URL: $ArtifactUrl"
+
+              # Version is second-to-last path segment: .../27.0.38460.41755/us
+              $RawVersion = ($ArtifactUrl -split '/')[-2]
+
+              if ($RawVersion -match '^\d+\.\d+\.\d+\.\d+$') {
+                $BcVersion = $RawVersion
+                $VersionResolved = $true
+                Write-Host "BC version: $BcVersion"
+              } else {
+                Write-Warning "Unexpected version format '$RawVersion' — falling back to date-based versioning"
+              }
+            } catch {
+              Write-Warning "BC version resolution failed: $_ — falling back to date-based versioning"
+            }
+          } else {
+            Write-Host "'$BcSelect' requires insider credentials — using date-based versioning"
+          }
+
+          # ----------------------------------------------------------------
+          # 4. Compute version strings
+          # ----------------------------------------------------------------
+          if ($VersionResolved) {
+            # BC: Major.Minor.Build.Revision (e.g. 27.0.38460.41755)
+            # Azure SIG requires 3 integers — map to Major.Build.Revision (drop always-0 Minor)
+            $p = $BcVersion -split '\.'
+            $GalleryVersion = "$($p[0]).$($p[2]).$($p[3])"   # e.g. 27.38460.41755
+            $ImageName      = "algo-runner-win22-$BcVersion"  # e.g. algo-runner-win22-27.0.38460.41755
+            $ImageVersion   = $GalleryVersion
+          } else {
+            Write-Host "::warning::Using date-based versioning fallback"
+            $DateSuffix   = Get-Date -Format 'yyyyMMdd.HHmm'
+            $ImageVersion = "1.$DateSuffix"
+            $ImageName    = "algo-runner-win22-$DateSuffix"
+            $BcVersion    = $ImageVersion
+          }
+
+          # ----------------------------------------------------------------
+          # 5. Generate temp resource group name
+          # ----------------------------------------------------------------
           $randomSuffix = -join ((48..57) + (97..122) | Get-Random -Count 6 | ForEach-Object {[char]$_})
           $TempRgName = "${{ vars.AZURE_RESOURCE_GROUP }}-temp-$randomSuffix"
-          "image_name=$ImageName" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "image_version=$ImageVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "temp_rg_name=$TempRgName" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          Write-Host "::notice::Image name: $ImageName, Version: $ImageVersion"
+
+          # ----------------------------------------------------------------
+          # 6. Write outputs
+          # ----------------------------------------------------------------
+          "image_name=$ImageName"           | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "image_version=$ImageVersion"     | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "bc_version=$BcVersion"           | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "build_timestamp=$BuildTimestamp" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "temp_rg_name=$TempRgName"        | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+          Write-Host "::notice::BC Version: $BcVersion"
+          Write-Host "::notice::Gallery Version (SIG): $ImageVersion"
+          Write-Host "::notice::Image Name: $ImageName"
+          Write-Host "::notice::Built at: $BuildTimestamp"
           Write-Host "::notice::Temp RG: $TempRgName"
 
       - name: Generate install password
@@ -111,7 +224,48 @@ jobs:
         with:
           creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
 
+      - name: Pre-build check and cleanup
+        id: precheck
+        shell: pwsh
+        run: |
+          $ImageName    = "${{ steps.names.outputs.image_name }}"
+          $ImageVersion = "${{ steps.names.outputs.image_version }}"
+          $ForceRebuild = "${{ inputs.force_rebuild }}" -eq "true"
+          $Rg           = "${{ vars.AZURE_RESOURCE_GROUP }}"
+
+          # Delete managed image if it exists — it is a transient Packer staging
+          # artifact and is always safe to remove regardless of force_rebuild.
+          az image show --resource-group $Rg --name $ImageName 2>$null | Out-Null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Managed image '$ImageName' exists — deleting (transient artifact)..."
+            az image delete --resource-group $Rg --name $ImageName
+            if ($LASTEXITCODE -ne 0) { throw "Failed to delete managed image '$ImageName'" }
+            Write-Host "Managed image deleted."
+          }
+          $global:LASTEXITCODE = 0
+
+          # Check whether the gallery image version already exists and succeeded.
+          $galleryState = az sig image-version show `
+            --resource-group $Rg `
+            --gallery-name "${{ vars.AZURE_GALLERY_NAME }}" `
+            --gallery-image-definition "${{ vars.AZURE_GALLERY_IMAGE_NAME }}" `
+            --gallery-image-version $ImageVersion `
+            --query "provisioningState" --output tsv 2>$null
+          $galleryExists = ($LASTEXITCODE -eq 0) -and ($galleryState -eq "Succeeded")
+          $global:LASTEXITCODE = 0
+
+          if ($galleryExists -and -not $ForceRebuild) {
+            Write-Host "::notice::Gallery version $ImageVersion already exists — skipping build. Set force_rebuild=true to override."
+            "skip_build=true" >> $env:GITHUB_OUTPUT
+          } else {
+            if ($galleryExists -and $ForceRebuild) {
+              Write-Host "Force rebuild — Packer will overwrite gallery version $ImageVersion."
+            }
+            "skip_build=false" >> $env:GITHUB_OUTPUT
+          }
+
       - name: Packer Init
+        if: steps.precheck.outputs.skip_build != 'true'
         shell: pwsh
         working-directory: ${{ env.TEMPLATE_PATH }}
         run: |
@@ -121,6 +275,7 @@ jobs:
 
       - name: Build Managed Image
         id: build
+        if: steps.precheck.outputs.skip_build != 'true'
         shell: pwsh
         working-directory: ${{ env.TEMPLATE_PATH }}
         env:
@@ -146,17 +301,24 @@ jobs:
           PKR_VAR_temp_resource_group_name: ${{ steps.names.outputs.temp_rg_name }}
         run: |
           Write-Host "Building AL-Go runner image..."
+          Write-Host "   -> BC Version: ${{ steps.names.outputs.bc_version }}"
+          Write-Host "   -> Gallery Version: ${{ steps.names.outputs.image_version }}"
           Write-Host "   -> Image Name: ${{ steps.names.outputs.image_name }}"
-          Write-Host "   -> Image Version: ${{ steps.names.outputs.image_version }}"
+          Write-Host "   -> Built at: ${{ steps.names.outputs.build_timestamp }}"
           Write-Host "   -> Temp RG: ${{ steps.names.outputs.temp_rg_name }}"
           Write-Host "   -> BC Type: ${{ inputs.bc_type }}"
           Write-Host "   -> BC Country: ${{ inputs.bc_country }}"
+          Write-Host "   -> BC Select: ${{ inputs.bc_select }}"
 
-          packer build `
-            -only="windows-2022-algo.azure-arm.image" `
-            -color=false `
-            -on-error=abort `
-            .
+          $packerArgs = @(
+            "build",
+            "-only=windows-2022-algo.azure-arm.image",
+            "-color=false",
+            "-on-error=abort"
+          )
+          if ("${{ inputs.force_rebuild }}" -eq "true") { $packerArgs += "-force" }
+          $packerArgs += "."
+          & packer @packerArgs
 
           if ($LASTEXITCODE -ne 0) {
             Write-Error "Packer build failed"
@@ -175,6 +337,26 @@ jobs:
             images/windows/software-report-algo.json
           retention-days: 90
           if-no-files-found: warn
+
+      - name: Write build outputs manifest
+        if: success()
+        shell: pwsh
+        run: |
+          $lines = @(
+            "image_version=${{ steps.names.outputs.image_version }}",
+            "bc_version=${{ steps.names.outputs.bc_version }}",
+            "build_timestamp=${{ steps.names.outputs.build_timestamp }}",
+            "image_name=${{ steps.names.outputs.image_name }}"
+          )
+          $lines | Out-File -FilePath "$env:RUNNER_TEMP\build-outputs.txt" -Encoding utf8
+
+      - name: Upload build-outputs artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-outputs
+          path: ${{ runner.temp }}/build-outputs.txt
+          retention-days: 90
 
   # ============================================================================
   # Job 2: Verify Gallery Image
@@ -224,7 +406,7 @@ jobs:
     name: Create GitHub Release
     needs: [build-image, verify-gallery]
     runs-on: self-hosted
-    if: success()
+    if: success() && needs.build-image.outputs.skip_build != 'true'
     permissions:
       contents: write
 
@@ -242,20 +424,22 @@ jobs:
       - name: Create Release
         uses: ncipollo/release-action@v1
         with:
-          tag: "v${{ needs.build-image.outputs.image_version }}"
-          name: "AL-Go Runner Image v${{ needs.build-image.outputs.image_version }}"
+          tag: "v${{ needs.build-image.outputs.bc_version }}"
+          name: "AL-Go Runner Image v${{ needs.build-image.outputs.bc_version }}"
           body: |
             ## AL-Go Runner Image Release
 
-            **Image Version:** ${{ needs.build-image.outputs.image_version }}
+            **BC Version:** ${{ needs.build-image.outputs.bc_version }}
+            **Gallery Version (SIG):** ${{ needs.build-image.outputs.image_version }}
             **Image Name:** ${{ needs.build-image.outputs.image_name }}
             **Gallery:** ${{ vars.AZURE_GALLERY_NAME }}
             **Definition:** ${{ vars.AZURE_GALLERY_IMAGE_NAME }}
+            **Built at:** ${{ needs.build-image.outputs.build_timestamp }}
 
             ### BC Configuration
             - **Type:** ${{ inputs.bc_type }}
             - **Country:** ${{ inputs.bc_country }}
-            - **Version:** ${{ inputs.bc_select }}
+            - **Version Selection:** ${{ inputs.bc_select }}
             - **Cache Skipped:** ${{ inputs.skip_bc_cache }}
 
             ### What's Included
@@ -263,7 +447,7 @@ jobs:
             - Docker with Windows containers
             - BcContainerHelper module
             - Pre-cached BC artifacts and Docker image
-            - .NET 8.0 SDK
+            - .NET SDK
             - Git, Azure CLI, PowerShell 7
             - Node.js 20 LTS
 
@@ -272,6 +456,9 @@ jobs:
             ```
             ${{ vars.AZURE_GALLERY_NAME }}/${{ vars.AZURE_GALLERY_IMAGE_NAME }}/${{ needs.build-image.outputs.image_version }}
             ```
+
+            > Gallery version uses `Major.Build.Revision` format to satisfy Azure SIG 3-part requirement.
+            > Full BC version is available in the release tag: `v${{ needs.build-image.outputs.bc_version }}`
 
             ### Performance
             - BC container startup: < 2 minutes (vs 30-45 min on GitHub-hosted runners)
@@ -286,8 +473,10 @@ jobs:
           "" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
           "| Property | Value |" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
           "|----------|-------|" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "| **BC Version** | ${{ needs.build-image.outputs.bc_version }} |" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "| **Gallery Version** | ${{ needs.build-image.outputs.image_version }} |" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
           "| **Image Name** | ${{ needs.build-image.outputs.image_name }} |" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
-          "| **Image Version** | ${{ needs.build-image.outputs.image_version }} |" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "| **Built At** | ${{ needs.build-image.outputs.build_timestamp }} |" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
           "| **Gallery** | ${{ vars.AZURE_GALLERY_NAME }} |" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
           "| **Resource Group** | ${{ vars.AZURE_RESOURCE_GROUP }} |" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
 

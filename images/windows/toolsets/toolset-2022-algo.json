@@ -12,9 +12,11 @@
     ],
     "powershellModules": [
         { "name": "DockerMsftProvider" },
+        { "name": "MarkdownPS" },
         { "name": "Pester" },
         { "name": "PowerShellGet" },
-        { "name": "PSScriptAnalyzer" }
+        { "name": "PSScriptAnalyzer" },
+        { "name": "PSWindowsUpdate" }
     ],
     "azureModules": [
         {
@@ -29,35 +31,34 @@
         { "name": "Containers" },
         { "name": "Microsoft-Windows-Subsystem-Linux", "optionalFeature": true },
         { "name": "VirtualMachinePlatform", "optionalFeature": true },
-        { "name": "NET-Framework-45-Features", "includeAllSubFeatures": true },
-        { "name": "NET-Framework-Features", "includeAllSubFeatures": true },
         { "name": "Hyper-V", "includeAllSubFeatures": true },
         { "name": "Hyper-V-PowerShell" },
         { "name": "Wireless-Networking" }
     ],
     "docker": {
         "images": [
-            "mcr.microsoft.com/windows/servercore:ltsc2022",
             "mcr.microsoft.com/businesscentral:ltsc2022"
         ],
         "components": {
-            "docker": "27.5.1",
-            "compose": "2.32.2"
+            "docker": "27.5.1"
         }
-    },
-    "dotnet": {
-        "versions": [
-            "8.0"
-        ],
-        "tools": [],
-        "warmup": false
     },
     "choco": {
         "common_packages": [
             { "name": "7zip.install" },
             { "name": "jq" },
-            { "name": "NuGet.CommandLine" }
+            { "name": "NuGet.CommandLine" },
+            { "name": "dotnet" },
+            { "name": "vcredist140" }
         ]
+    },
+    "dotnet": {
+        "versions": [
+            "9.0",
+            "10.0"
+        ],
+        "tools": [],
+        "warmup": false
     },
     "node": {
         "default": "20.*"

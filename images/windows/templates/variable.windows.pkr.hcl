@@ -138,6 +138,10 @@ variable "winrm_username" {         // The username used to connect to the VM vi
     type    = string                // Also applies to the username used to create the VM
     default = "packer"
 }
+variable "winrm_timeout" {         // Timeout for WinRM connections and file uploads
+  type    = string
+  default = "1h"
+}
 
 // Image related variables
 variable "agent_tools_directory" {

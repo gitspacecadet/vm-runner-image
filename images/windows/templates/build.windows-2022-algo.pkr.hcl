@@ -211,6 +211,19 @@ build {
     ]
   }
 
+  # Phase 10.5: BC Container smoke-test (validates Phase 10's image actually starts)
+  # Project-owner-approved 2026-06-08 as Option A: smoke-test only, no pre-warm.
+  # Adds ~3-5 min wall-clock; catches broken-image bugs at bake time.
+  provisioner "powershell" {
+    environment_vars = [
+      "BC_CACHE_DIR=C:\\bcartifacts.cache",
+      "BC_CACHE_SKIP=${var.bc_cache_skip}"
+    ]
+    scripts = [
+      "${path.root}/../scripts/build/Smoke-BcContainer.ps1"
+    ]
+  }
+
   # Phase 11: Windows Updates and final configuration
   provisioner "powershell" {
     elevated_password = "${var.install_password}"

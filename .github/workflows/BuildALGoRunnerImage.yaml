@@ -70,6 +70,10 @@ jobs:
     name: Build Managed Image
     runs-on: self-hosted
     timeout-minutes: 180  # 3 hours max for Windows image build
+    environment: image-build  # OIDC token subject -> matches FIC on id-ghrunners-image-builder UAMI
+    permissions:
+      id-token: write   # required to mint the OIDC token for azure/login
+      contents: read
     outputs:
       image_name: ${{ steps.names.outputs.image_name }}
       image_version: ${{ steps.names.outputs.image_version }}
@@ -219,10 +223,12 @@ jobs:
           Write-Host "::add-mask::$password"
           "password=$password" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
-      - name: Azure Login
+      - name: Azure Login (OIDC)
         uses: azure/login@v2
         with:
-          creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Pre-build check and cleanup
         id: precheck
@@ -280,7 +286,9 @@ jobs:
         working-directory: ${{ env.TEMPLATE_PATH }}
         env:
           PKR_VAR_client_id: ${{ secrets.AZURE_CLIENT_ID }}
-          PKR_VAR_client_secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          # PKR_VAR_client_secret removed: OIDC migration 2026-05-25.
+          # Packer's azure-arm builder reuses the az-login OIDC session via use_azure_cli_auth.
+          PKR_VAR_use_azure_cli_auth: "true"
           PKR_VAR_tenant_id: ${{ secrets.AZURE_TENANT_ID }}
           PKR_VAR_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           PKR_VAR_managed_image_resource_group_name: ${{ vars.AZURE_RESOURCE_GROUP }}
@@ -367,12 +375,18 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 10
     if: success()
+    environment: image-build  # OIDC token subject -> matches FIC on id-ghrunners-image-builder UAMI
+    permissions:
+      id-token: write
+      contents: read
 
     steps:
-      - name: Azure Login
+      - name: Azure Login (OIDC)
         uses: azure/login@v2
         with:
-          creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Verify gallery image version
         shell: pwsh
@@ -489,12 +503,18 @@ jobs:
     runs-on: self-hosted
     if: always() && needs.build-image.outputs.temp_rg_name != ''
     timeout-minutes: 10
+    environment: image-build  # OIDC token subject -> matches FIC on id-ghrunners-image-builder UAMI
+    permissions:
+      id-token: write
+      contents: read
 
     steps:
-      - name: Azure Login
+      - name: Azure Login (OIDC)
         uses: azure/login@v2
         with:
-          creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Delete temp resource group if exists
         shell: pwsh

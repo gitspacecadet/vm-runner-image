@@ -106,14 +106,29 @@ try {
 }
 finally {
 	if ($cleanupRequired) {
-		Write-Host "[BC SMOKE] Removing smoke container '$containerName'..."
-		try {
-			Remove-BcContainer -containerName $containerName
-			Write-Host "[BC SMOKE] Smoke container removed."
-		} catch {
-			# Don't fail Packer on cleanup error -- log + continue. Container
-			# will be torn down with the Packer VM regardless.
-			Write-Warning "[BC SMOKE] Failed to remove container '$containerName': $_"
+		# EXPERIMENT 2026-06-09: Keep the smoke container in the image (skip Remove-BcContainer)
+		# to test whether a pre-baked BC container shortens cold-VM container creation time on
+		# the subsequent CI/CD run that uses the new image. New-BcContainer in the CI/CD uses
+		# a different container name (bc<workflowRunId>), so this container sits as a "decoy"
+		# warming Docker layer cache + OS file cache + possibly the BC service tier in RAM
+		# (because --restart unless-stopped will auto-start it on VM boot).
+		#
+		# Default is "keep". To revert to normal smoke-then-remove behavior, set
+		# BC_SMOKE_REMOVE=true in the Packer environment_vars.
+		$shouldRemove = $env:BC_SMOKE_REMOVE -and $env:BC_SMOKE_REMOVE.ToString().ToLower() -in @('1','true','yes','y')
+		if ($shouldRemove) {
+			Write-Host "[BC SMOKE] Removing smoke container '$containerName' (BC_SMOKE_REMOVE=true)..."
+			try {
+				Remove-BcContainer -containerName $containerName
+				Write-Host "[BC SMOKE] Smoke container removed."
+			} catch {
+				Write-Warning "[BC SMOKE] Failed to remove container '$containerName': $_"
+			}
+		} else {
+			Write-Host "[BC SMOKE] EXPERIMENT: keeping container '$containerName' in image (BC_SMOKE_REMOVE not set)."
+			Write-Host "[BC SMOKE]   --restart unless-stopped means container auto-restarts on VM boot."
+			Write-Host "[BC SMOKE]   On the next CI/CD using this image, observe whether container creation time"
+			Write-Host "[BC SMOKE]   drops from ~360s (cold-VM) toward ~126s (warm-runner) baseline."
 		}
 	}
 }

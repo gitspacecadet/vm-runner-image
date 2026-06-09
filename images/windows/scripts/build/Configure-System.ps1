@@ -64,7 +64,7 @@ $registrySettings = @(
     @{Path = "HKLM:\SYSTEM\CurrentControlSet\Control"; Name = "ServicesPipeTimeout"; Value = 120000; PropertyType = "DWORD" }
     @{Path = "HKLM:\SYSTEM\CurrentControlSet\Control\WMI\AutoLogger\AutoLogger-Diagtrack-Listener"; Name = "Start"; Value = 0; PropertyType = "DWORD" }
     @{Path = "HKLM:\SYSTEM\CurrentControlSet\Control\WMI\AutoLogger\SQMLogger"; Name = "Start"; Value = 0; PropertyType = "DWORD" }
-    # Long-paths support — required for AL-Go customer repos with long branch names (e.g. K3EH-Pebblestone-Manufacturing's 13969-Calculate-Regenerative-Plan-... branch hit MAX_PATH=260 in `_work/<owner>/<repo>/.git/refs/...lock`)
+    # Long-paths support -- required for AL-Go customer repos with long branch names (e.g. K3EH-Pebblestone-Manufacturing's 13969-Calculate-Regenerative-Plan-... branch hit MAX_PATH=260 in `_work/<owner>/<repo>/.git/refs/...lock`)
     @{Path = "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem"; Name = "LongPathsEnabled"; Value = 1; PropertyType = "DWORD" }
 )
 

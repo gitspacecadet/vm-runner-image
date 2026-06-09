@@ -39,7 +39,7 @@ if ($LASTEXITCODE -ne 0) {
     Write-Error "Failed to configure safe.directory for Git with exit code $LASTEXITCODE"
 }
 
-# Long-paths support — pairs with HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem\LongPathsEnabled in Configure-System.ps1
+# Long-paths support -- pairs with HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem\LongPathsEnabled in Configure-System.ps1
 git config --system core.longpaths true
 if ($LASTEXITCODE -ne 0) {
     Write-Error "Failed to configure core.longpaths for Git with exit code $LASTEXITCODE"

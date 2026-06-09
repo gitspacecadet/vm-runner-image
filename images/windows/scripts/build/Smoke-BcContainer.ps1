@@ -13,7 +13,7 @@
 ##     service tier reachability, tears down on success or failure
 ##   - Fails the Packer build if container won't start (treats image as broken)
 ##
-##  Trade-off (project-owner-approved 2026-06-08 as Option A — smoke-test only):
+##  Trade-off (project-owner-approved 2026-06-08 as Option A -- smoke-test only):
 ##   - Adds ~3-5 min to Packer wall-clock
 ##   - No CI/CD reuse benefit (container state isn't snapshotted; would be
 ##     hostname/license-bound on the Packer VM)
@@ -32,7 +32,7 @@ Write-Host "[BC SMOKE] Starting Business Central container smoke-test" -Foregrou
 $cacheDir = if ($env:BC_CACHE_DIR) { $env:BC_CACHE_DIR } else { 'C:\bcartifacts.cache' }
 $metadataPath = Join-Path $cacheDir 'bc-cache-metadata.json'
 if (-not (Test-Path $metadataPath)) {
-	throw "[BC SMOKE] Cache metadata missing at $metadataPath — Create-BcImage.ps1 must have failed or been skipped"
+	throw "[BC SMOKE] Cache metadata missing at $metadataPath -- Create-BcImage.ps1 must have failed or been skipped"
 }
 
 $metadata = Get-Content $metadataPath -Raw | ConvertFrom-Json
@@ -47,7 +47,7 @@ Import-Module BcContainerHelper -Force
 $containerName = 'bcsmoke'
 $cleanupRequired = $false
 
-# Throwaway password — never persisted; container is removed at end.
+# Throwaway password -- never persisted; container is removed at end.
 $smokePassword = ConvertTo-SecureString -String 'P@ssword$1' -AsPlainText -Force
 $smokeCredential = New-Object System.Management.Automation.PSCredential('admin', $smokePassword)
 
@@ -77,7 +77,7 @@ try {
 	$createElapsed = (Get-Date) - $createStart
 	Write-Host "[BC SMOKE] Container created in $([Math]::Round($createElapsed.TotalSeconds,1))s"
 
-	# Service-tier reachability check — BcContainerHelper's Test-BcContainer
+	# Service-tier reachability check -- BcContainerHelper's Test-BcContainer
 	# is the canonical "is it up?" gate. If this returns false, the container
 	# is up but BC service tier hasn't bound yet.
 	$reachable = $false
@@ -99,7 +99,7 @@ try {
 	Write-Host "[BC SMOKE] Service tier reachable. Verifying basic container info..."
 	$containerInfo = Get-BcContainerArtifactUrl -containerName $containerName
 	if (-not $containerInfo) {
-		throw "[BC SMOKE] Get-BcContainerArtifactUrl returned empty — container metadata not accessible"
+		throw "[BC SMOKE] Get-BcContainerArtifactUrl returned empty -- container metadata not accessible"
 	}
 	Write-Host "[BC SMOKE] Container artifact URL: $containerInfo"
 	Write-Host "[BC SMOKE] Container is healthy. Smoke-test passed." -ForegroundColor Green
@@ -111,7 +111,7 @@ finally {
 			Remove-BcContainer -containerName $containerName
 			Write-Host "[BC SMOKE] Smoke container removed."
 		} catch {
-			# Don't fail Packer on cleanup error — log + continue. Container
+			# Don't fail Packer on cleanup error -- log + continue. Container
 			# will be torn down with the Packer VM regardless.
 			Write-Warning "[BC SMOKE] Failed to remove container '$containerName': $_"
 		}

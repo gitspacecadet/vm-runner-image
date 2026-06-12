@@ -129,6 +129,23 @@ finally {
 			Write-Host "[BC SMOKE]   --restart unless-stopped means container auto-restarts on VM boot."
 			Write-Host "[BC SMOKE]   On the next CI/CD using this image, observe whether container creation time"
 			Write-Host "[BC SMOKE]   drops from ~360s (cold-VM) toward ~126s (warm-runner) baseline."
+
+			# Write durable marker so CSE on the VMSS instance can declare keep-container=true
+			# in the [PROBE_KEEP_CONTAINER] log line ScaleIn's harvester correlates against image versions.
+			$markerPath = Join-Path $cacheDir 'keep-container-marker.json'
+			try {
+				$marker = [ordered]@{
+					enabled       = $true
+					containerName = $containerName
+					imageName     = $imageName
+					bakedAtUtc    = (Get-Date).ToUniversalTime().ToString('o')
+					commit        = 'cb27d8f5'  # experiment commit; bumps with future revisions
+				}
+				$marker | ConvertTo-Json -Depth 5 | Out-File -FilePath $markerPath -Encoding UTF8
+				Write-Host "[BC SMOKE]   Marker written: $markerPath"
+			} catch {
+				Write-Warning "[BC SMOKE]   Failed to write keep-container marker: $_"
+			}
 		}
 	}
 }

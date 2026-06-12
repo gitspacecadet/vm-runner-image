@@ -46,6 +46,14 @@ on:
         required: false
         type: boolean
         default: false
+      runner_pool:
+        description: 'Runner pool. Use ubuntu-latest ONLY for first-image bootstrap on a fresh sub (no VMSS exists yet to spawn self-hosted runners). Reverts to self-hosted by default for normal operation.'
+        required: false
+        type: choice
+        default: 'self-hosted'
+        options:
+          - self-hosted
+          - ubuntu-latest
 
 # Minimal global permissions
 permissions:
@@ -68,7 +76,7 @@ jobs:
   # ============================================================================
   build-image:
     name: Build Managed Image
-    runs-on: self-hosted
+    runs-on: ${{ inputs.runner_pool || 'self-hosted' }}
     timeout-minutes: 180  # 3 hours max for Windows image build
     environment: image-build  # OIDC token subject -> matches FIC on id-ghrunners-image-builder UAMI
     permissions:
@@ -372,7 +380,7 @@ jobs:
   verify-gallery:
     name: Verify Gallery Image
     needs: build-image
-    runs-on: self-hosted
+    runs-on: ${{ inputs.runner_pool || 'self-hosted' }}
     timeout-minutes: 10
     if: success()
     environment: image-build  # OIDC token subject -> matches FIC on id-ghrunners-image-builder UAMI
@@ -419,7 +427,7 @@ jobs:
   create-release:
     name: Create GitHub Release
     needs: [build-image, verify-gallery]
-    runs-on: self-hosted
+    runs-on: ${{ inputs.runner_pool || 'self-hosted' }}
     if: success() && needs.build-image.outputs.skip_build != 'true'
     permissions:
       contents: write
@@ -500,7 +508,7 @@ jobs:
   cleanup:
     name: Cleanup Temp Resources
     needs: build-image
-    runs-on: self-hosted
+    runs-on: ${{ inputs.runner_pool || 'self-hosted' }}
     if: always() && needs.build-image.outputs.temp_rg_name != ''
     timeout-minutes: 10
     environment: image-build  # OIDC token subject -> matches FIC on id-ghrunners-image-builder UAMI

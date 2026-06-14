@@ -278,6 +278,30 @@ jobs:
             "skip_build=false" >> $env:GITHUB_OUTPUT
           }
 
+      # Switch az auth from SP+OIDC to managed identity for the long Packer call.
+      # OIDC client assertion has a 5-min lifetime; AAD access token (1h) cannot
+      # refresh after assertion expiry, breaking Packer's >1h azure-arm builds.
+      # UAMI's IMDS token refreshes indefinitely via VM metadata service.
+      # RCA: FromTFAgent/12-oidc-trap-recurred-on-self-hosted-recommended-fix-2026-06-14.md
+      # Defaults match TF's canonical naming; override via repo vars
+      # (VMSS_UAMI_NAME, VMSS_UAMI_RESOURCE_GROUP) for non-default deployments.
+      # Skipped on ubuntu-latest (no MI to switch to; long-running builds will
+      # still fail there if anyone uses the runner_pool=ubuntu-latest escape hatch).
+      - name: Switch az auth to managed identity for long Packer call
+        if: ${{ steps.precheck.outputs.skip_build != 'true' && inputs.runner_pool != 'ubuntu-latest' }}
+        shell: bash
+        run: |
+          UAMI_RG="${{ vars.VMSS_UAMI_RESOURCE_GROUP || vars.AZURE_RESOURCE_GROUP }}"
+          UAMI_NAME="${{ vars.VMSS_UAMI_NAME || 'id-shared-ghrunners-dev-cus' }}"
+          UAMI_CLIENT_ID=$(az identity show \
+            --resource-group "$UAMI_RG" \
+            --name "$UAMI_NAME" \
+            --query clientId -o tsv)
+          az logout
+          az login --identity --client-id "$UAMI_CLIENT_ID"
+          az account set --subscription ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          az account show --output table
+
       - name: Packer Init
         if: steps.precheck.outputs.skip_build != 'true'
         shell: pwsh

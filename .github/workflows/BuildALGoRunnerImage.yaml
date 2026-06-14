@@ -331,7 +331,10 @@ jobs:
           # temp_resource_group_name are mutually exclusive in Packer azure-arm builder.
           PKR_VAR_build_resource_group_name: ${{ vars.AZURE_BUILD_RESOURCE_GROUP }}
           PKR_VAR_managed_image_resource_group_name: ${{ vars.AZURE_BUILD_RESOURCE_GROUP }}
-          PKR_VAR_location: ${{ vars.AZURE_LOCATION }}
+          # PKR_VAR_location intentionally NOT set: Packer's azure-arm builder rejects
+          # `location` + `build_resource_group_name` as mutually exclusive (it infers
+          # the location from the existing build RG instead). The publish-to-gallery
+          # job still uses vars.AZURE_LOCATION for SIG --target-regions.
           PKR_VAR_managed_image_name: ${{ steps.names.outputs.image_name }}
           PKR_VAR_image_os: ${{ env.IMAGE_OS }}
           PKR_VAR_install_password: ${{ steps.password.outputs.password }}

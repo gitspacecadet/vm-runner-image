@@ -246,19 +246,22 @@ jobs:
           $ImageVersion = "${{ steps.names.outputs.image_version }}"
           $ForceRebuild = "${{ inputs.force_rebuild }}" -eq "true"
           $Rg           = "${{ vars.AZURE_RESOURCE_GROUP }}"
+          $BuildRg      = "${{ vars.AZURE_BUILD_RESOURCE_GROUP }}"
 
-          # Delete managed image if it exists — it is a transient Packer staging
-          # artifact and is always safe to remove regardless of force_rebuild.
-          az image show --resource-group $Rg --name $ImageName 2>$null | Out-Null
+          # Delete managed image if it exists in the scoped build RG — it is a
+          # transient Packer staging artifact and is always safe to remove
+          # regardless of force_rebuild.
+          az image show --resource-group $BuildRg --name $ImageName 2>$null | Out-Null
           if ($LASTEXITCODE -eq 0) {
-            Write-Host "Managed image '$ImageName' exists — deleting (transient artifact)..."
-            az image delete --resource-group $Rg --name $ImageName
+            Write-Host "Managed image '$ImageName' exists in '$BuildRg' — deleting (transient artifact)..."
+            az image delete --resource-group $BuildRg --name $ImageName
             if ($LASTEXITCODE -ne 0) { throw "Failed to delete managed image '$ImageName'" }
             Write-Host "Managed image deleted."
           }
           $global:LASTEXITCODE = 0
 
-          # Check whether the gallery image version already exists and succeeded.
+          # Check whether the gallery image version already exists and succeeded
+          # (gallery still lives in the runtime RG, not the build RG).
           $galleryState = az sig image-version show `
             --resource-group $Rg `
             --gallery-name "${{ vars.AZURE_GALLERY_NAME }}" `
@@ -323,11 +326,19 @@ jobs:
           PKR_VAR_use_azure_cli_auth: "true"
           PKR_VAR_tenant_id: ${{ secrets.AZURE_TENANT_ID }}
           PKR_VAR_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          PKR_VAR_managed_image_resource_group_name: ${{ vars.AZURE_RESOURCE_GROUP }}
+          # build + managed-image both land in the scoped image-build RG (TF-managed,
+          # shared UAMI has Contributor only there). build_resource_group_name and
+          # temp_resource_group_name are mutually exclusive in Packer azure-arm builder.
+          PKR_VAR_build_resource_group_name: ${{ vars.AZURE_BUILD_RESOURCE_GROUP }}
+          PKR_VAR_managed_image_resource_group_name: ${{ vars.AZURE_BUILD_RESOURCE_GROUP }}
           PKR_VAR_location: ${{ vars.AZURE_LOCATION }}
           PKR_VAR_managed_image_name: ${{ steps.names.outputs.image_name }}
           PKR_VAR_image_os: ${{ env.IMAGE_OS }}
           PKR_VAR_install_password: ${{ steps.password.outputs.password }}
+          # Gallery PKR_VARs retained for now (.pkr.hcl variable declarations still
+          # reference them via env defaults); shared_image_gallery_destination block
+          # removed from source.windows.pkr.hcl so Packer no longer uses them.
+          # The new publish-to-gallery job (OIDC, image_builder UAMI) handles publish.
           PKR_VAR_gallery_name: ${{ vars.AZURE_GALLERY_NAME }}
           PKR_VAR_gallery_resource_group_name: ${{ vars.AZURE_RESOURCE_GROUP }}
           PKR_VAR_gallery_image_name: ${{ vars.AZURE_GALLERY_IMAGE_NAME }}
@@ -338,7 +349,6 @@ jobs:
           PKR_VAR_bc_select: ${{ inputs.bc_select }}
           PKR_VAR_bc_cache_skip: ${{ inputs.skip_bc_cache }}
           PKR_VAR_vm_size: "Standard_D4s_v3"
-          PKR_VAR_temp_resource_group_name: ${{ steps.names.outputs.temp_rg_name }}
         run: |
           Write-Host "Building AL-Go runner image..."
           Write-Host "   -> BC Version: ${{ steps.names.outputs.bc_version }}"
@@ -399,11 +409,96 @@ jobs:
           retention-days: 90
 
   # ============================================================================
-  # Job 2: Verify Gallery Image
+  # Job 2: Publish managed image to Shared Image Gallery
+  #
+  # Runs on OIDC as the image-builder UAMI (a992e7ae-...), which has sub-Contributor
+  # and FIC for environment:image-build. Reads the managed image captured by Packer
+  # in AZURE_BUILD_RESOURCE_GROUP, creates the SIG version in AZURE_RESOURCE_GROUP.
+  #
+  # Why this is a separate job (not inline in Packer's source.windows.pkr.hcl):
+  # the runtime UAMI that Packer authenticates as (post-IMDS-switch) has Contributor
+  # scoped ONLY to AZURE_BUILD_RESOURCE_GROUP. Gallery write must be on a different
+  # identity to keep gallery-write off the high-blast-radius runtime identity that
+  # every CI job on the pool can assume via IMDS.
+  # ============================================================================
+  publish-to-gallery:
+    name: Publish to Shared Image Gallery
+    needs: build-image
+    runs-on: ${{ inputs.runner_pool || 'self-hosted' }}
+    timeout-minutes: 15
+    if: success() && needs.build-image.outputs.skip_build != 'true'
+    environment: image-build  # OIDC token subject -> matches FIC on id-ghrunners-image-builder UAMI
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Publish managed image to SIG
+        shell: pwsh
+        run: |
+          $ImageName    = "${{ needs.build-image.outputs.image_name }}"
+          $ImageVersion = "${{ needs.build-image.outputs.image_version }}"
+          $BuildRg      = "${{ vars.AZURE_BUILD_RESOURCE_GROUP }}"
+          $GalleryRg    = "${{ vars.AZURE_RESOURCE_GROUP }}"
+          $GalleryName  = "${{ vars.AZURE_GALLERY_NAME }}"
+          $ImageDef     = "${{ vars.AZURE_GALLERY_IMAGE_NAME }}"
+          $Location     = "${{ vars.AZURE_LOCATION }}"
+          $SubId        = "${{ secrets.AZURE_SUBSCRIPTION_ID }}"
+
+          $ManagedImageId = "/subscriptions/$SubId/resourceGroups/$BuildRg/providers/Microsoft.Compute/images/$ImageName"
+
+          Write-Host "Publishing managed image to Shared Image Gallery..."
+          Write-Host "  Source : $ManagedImageId"
+          Write-Host "  Target : $GalleryName/$ImageDef/$ImageVersion in $GalleryRg ($Location)"
+
+          az sig image-version create `
+            --resource-group $GalleryRg `
+            --gallery-name $GalleryName `
+            --gallery-image-definition $ImageDef `
+            --gallery-image-version $ImageVersion `
+            --managed-image $ManagedImageId `
+            --target-regions $Location `
+            --replica-count 1
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "az sig image-version create failed with exit code $LASTEXITCODE"
+          }
+
+          Write-Host "Published: $GalleryName/$ImageDef/$ImageVersion"
+
+      - name: Delete managed image after publish
+        if: success()
+        shell: pwsh
+        run: |
+          # The managed image in the build RG is a transient capture artifact.
+          # Once published to SIG it serves no purpose; delete to free quota
+          # (managed images count against subscription image limits).
+          $ImageName = "${{ needs.build-image.outputs.image_name }}"
+          $BuildRg   = "${{ vars.AZURE_BUILD_RESOURCE_GROUP }}"
+
+          Write-Host "Deleting transient managed image '$ImageName' from '$BuildRg'..."
+          az image delete --resource-group $BuildRg --name $ImageName
+          if ($LASTEXITCODE -ne 0) {
+            # Non-fatal: gallery publish already succeeded; leftover managed
+            # image is operational waste, not a failure condition.
+            Write-Warning "Failed to delete managed image (non-fatal)."
+          } else {
+            Write-Host "Managed image deleted."
+          }
+
+  # ============================================================================
+  # Job 3: Verify Gallery Image
   # ============================================================================
   verify-gallery:
     name: Verify Gallery Image
-    needs: build-image
+    needs: [build-image, publish-to-gallery]
     runs-on: ${{ inputs.runner_pool || 'self-hosted' }}
     timeout-minutes: 10
     if: success()
@@ -446,11 +541,11 @@ jobs:
             --output table
 
   # ============================================================================
-  # Job 3: Create GitHub Release
+  # Job 4: Create GitHub Release
   # ============================================================================
   create-release:
     name: Create GitHub Release
-    needs: [build-image, verify-gallery]
+    needs: [build-image, publish-to-gallery, verify-gallery]
     runs-on: ${{ inputs.runner_pool || 'self-hosted' }}
     if: success() && needs.build-image.outputs.skip_build != 'true'
     permissions:
@@ -527,7 +622,15 @@ jobs:
           "| **Resource Group** | ${{ vars.AZURE_RESOURCE_GROUP }} |" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
 
   # ============================================================================
-  # Job 4: Cleanup Temp Resources (runs on failure/cancellation)
+  # Job 5: Cleanup Temp Resources (legacy — runs on failure/cancellation)
+  #
+  # 2026-06-14: With the build moved to AZURE_BUILD_RESOURCE_GROUP (TF-managed,
+  # NOT deleted), Packer no longer creates a per-build temp RG. This job is
+  # now a no-op in normal runs (the temp_rg_name output still exists but the
+  # RG won't exist in Azure, so `az group exists` returns false). Kept for
+  # backward-compatibility with any in-flight branch dispatches that still
+  # use the old PKR_VAR_temp_resource_group_name. Plan to remove + replace
+  # with a build-RG resource sweep in a follow-up commit.
   # ============================================================================
   cleanup:
     name: Cleanup Temp Resources

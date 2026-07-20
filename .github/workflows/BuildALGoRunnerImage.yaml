@@ -87,7 +87,6 @@ jobs:
       image_version: ${{ steps.names.outputs.image_version }}
       bc_version: ${{ steps.names.outputs.bc_version }}
       build_timestamp: ${{ steps.names.outputs.build_timestamp }}
-      temp_rg_name: ${{ steps.names.outputs.temp_rg_name }}
       skip_build: ${{ steps.precheck.outputs.skip_build }}
 
     steps:
@@ -199,25 +198,20 @@ jobs:
           }
 
           # ----------------------------------------------------------------
-          # 5. Generate temp resource group name
+          # 5. Write outputs
           # ----------------------------------------------------------------
-          $randomSuffix = -join ((48..57) + (97..122) | Get-Random -Count 6 | ForEach-Object {[char]$_})
-          $TempRgName = "${{ vars.AZURE_RESOURCE_GROUP }}-temp-$randomSuffix"
-
-          # ----------------------------------------------------------------
-          # 6. Write outputs
-          # ----------------------------------------------------------------
+          # temp_rg_name removed 2026-07-20: the per-build temp-RG pattern died
+          # 2026-06-14 (fixed build RG via PKR_VAR_build_resource_group_name);
+          # the cleanup job now sweeps the build RG's contents instead.
           "image_name=$ImageName"           | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "image_version=$ImageVersion"     | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "bc_version=$BcVersion"           | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "build_timestamp=$BuildTimestamp" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "temp_rg_name=$TempRgName"        | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
           Write-Host "::notice::BC Version: $BcVersion"
           Write-Host "::notice::Gallery Version (SIG): $ImageVersion"
           Write-Host "::notice::Image Name: $ImageName"
           Write-Host "::notice::Built at: $BuildTimestamp"
-          Write-Host "::notice::Temp RG: $TempRgName"
 
       - name: Generate install password
         id: password
@@ -367,7 +361,7 @@ jobs:
           Write-Host "   -> Gallery Version: ${{ steps.names.outputs.image_version }}"
           Write-Host "   -> Image Name: ${{ steps.names.outputs.image_name }}"
           Write-Host "   -> Built at: ${{ steps.names.outputs.build_timestamp }}"
-          Write-Host "   -> Temp RG: ${{ steps.names.outputs.temp_rg_name }}"
+          Write-Host "   -> Build RG: ${{ vars.AZURE_BUILD_RESOURCE_GROUP }}"
           Write-Host "   -> BC Type: ${{ inputs.bc_type }}"
           Write-Host "   -> BC Country: ${{ inputs.bc_country }}"
           Write-Host "   -> BC Select: ${{ inputs.bc_select }}"
@@ -634,22 +628,28 @@ jobs:
           "| **Resource Group** | ${{ vars.AZURE_RESOURCE_GROUP }} |" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
 
   # ============================================================================
-  # Job 5: Cleanup Temp Resources (legacy — runs on failure/cancellation)
+  # Job 5: Cleanup Build Residue
   #
-  # 2026-06-14: With the build moved to AZURE_BUILD_RESOURCE_GROUP (TF-managed,
-  # NOT deleted), Packer no longer creates a per-build temp RG. This job is
-  # now a no-op in normal runs (the temp_rg_name output still exists but the
-  # RG won't exist in Azure, so `az group exists` returns false). Kept for
-  # backward-compatibility with any in-flight branch dispatches that still
-  # use the old PKR_VAR_temp_resource_group_name. Plan to remove + replace
-  # with a build-RG resource sweep in a follow-up commit.
+  # 2026-07-20 (TF doc 25, operator-flagged): the old temp-RG check was a
+  # permanent no-op — the per-build temp-RG pattern died 2026-06-14 when Packer
+  # moved to the fixed, TF-managed AZURE_BUILD_RESOURCE_GROUP. Residue from
+  # failed/aborted builds (pkr VM, NIC, disk, pkr-KV, orphaned managed image)
+  # now lands INSIDE that RG, so this job sweeps its CONTENTS instead.
+  #
+  # Hard constraints:
+  #   * NEVER `az group delete` the build RG — it is TF-managed
+  #     (terraform/image-build.tf) and carries the shared UAMI's scoped
+  #     Contributor grant. Deleting it = TF drift + next build 403s.
+  #   * Same-workflow ordering (needs: build-image + if: always()) means we
+  #     never race our own live build. Do not add a scheduled trigger to this
+  #     job without a build-in-progress guard.
   # ============================================================================
   cleanup:
-    name: Cleanup Temp Resources
+    name: Cleanup Build Residue
     needs: build-image
     runs-on: ${{ inputs.runner_pool || 'self-hosted' }}
-    if: always() && needs.build-image.outputs.temp_rg_name != ''
-    timeout-minutes: 10
+    if: always()
+    timeout-minutes: 15
     environment: image-build  # OIDC token subject -> matches FIC on id-ghrunners-image-builder UAMI
     permissions:
       id-token: write
@@ -663,17 +663,46 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Delete temp resource group if exists
+      - name: Sweep leftover resources inside build RG
         shell: pwsh
         run: |
-          $tempRgName = "${{ needs.build-image.outputs.temp_rg_name }}"
-          Write-Host "Checking for temp resource group: $tempRgName"
+          $rg = "${{ vars.AZURE_BUILD_RESOURCE_GROUP }}"
+          if ([string]::IsNullOrWhiteSpace($rg)) {
+            Write-Host "::warning::AZURE_BUILD_RESOURCE_GROUP variable is empty - skipping sweep"
+            exit 0
+          }
+          Write-Host "Sweeping contents of build RG: $rg (the RG itself is TF-managed and is never deleted)"
 
-          $rgExists = az group exists --name $tempRgName
-          if ($rgExists -eq "true") {
-            Write-Host "Deleting temp resource group: $tempRgName"
-            az group delete --name $tempRgName --yes --no-wait
-            Write-Host "Deletion initiated (async)"
+          $ids = @(az resource list -g $rg --query "[].id" -o tsv)
+          if (-not $ids) {
+            Write-Host "Build RG clean - nothing to do"
+            exit 0
+          }
+          Write-Host "Found $($ids.Count) leftover resource(s):"
+          $ids | ForEach-Object { Write-Host "  $_" }
+
+          # VMs first (releases NIC/disk leases), then everything else.
+          # Second pass catches resources whose leases were still held on pass 1
+          # (e.g. disk still attached while the VM delete was completing).
+          $vms  = @($ids | Where-Object { $_ -match '/virtualMachines/' })
+          $rest = @($ids | Where-Object { $_ -notmatch '/virtualMachines/' })
+          foreach ($chunk in @($vms, $rest)) {
+            if ($chunk.Count -gt 0) {
+              az resource delete --ids @chunk 2>&1 | Write-Host
+            }
+          }
+
+          $remaining = @(az resource list -g $rg --query "[].id" -o tsv)
+          if ($remaining.Count -gt 0) {
+            Write-Host "Retry pass for $($remaining.Count) remaining resource(s)..."
+            Start-Sleep -Seconds 30
+            az resource delete --ids @remaining 2>&1 | Write-Host
+            $remaining = @(az resource list -g $rg --query "[].id" -o tsv)
+          }
+
+          if ($remaining.Count -gt 0) {
+            Write-Host "::warning::$($remaining.Count) resource(s) still present in $rg after retry - manual attention needed:"
+            $remaining | ForEach-Object { Write-Host "  $_" }
           } else {
-            Write-Host "Temp resource group not found (already cleaned up by Packer)"
+            Write-Host "Build RG swept clean"
           }

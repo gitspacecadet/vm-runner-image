@@ -294,9 +294,18 @@ jobs:
         if: ${{ steps.precheck.outputs.skip_build != 'true' && inputs.runner_pool != 'ubuntu-latest' }}
         shell: bash
         run: |
+          # The UAMI attached to this runner VM lives in the sub hosting the
+          # runner VMSS, which is NOT necessarily the build-target sub
+          # (secrets.AZURE_SUBSCRIPTION_ID). Resolving the clientId by name in
+          # the target sub picks up a same-named twin identity on redirected
+          # builds (2026-07-21 MPN run 29840814439: "Identity not found").
+          # VMSS_UAMI_SUBSCRIPTION_ID pins the lookup to the runner-host sub;
+          # default preserves same-sub behavior.
+          UAMI_SUB="${{ vars.VMSS_UAMI_SUBSCRIPTION_ID || secrets.AZURE_SUBSCRIPTION_ID }}"
           UAMI_RG="${{ vars.VMSS_UAMI_RESOURCE_GROUP || vars.AZURE_RESOURCE_GROUP }}"
           UAMI_NAME="${{ vars.VMSS_UAMI_NAME || 'id-shared-ghrunners-dev-cus' }}"
           UAMI_CLIENT_ID=$(az identity show \
+            --subscription "$UAMI_SUB" \
             --resource-group "$UAMI_RG" \
             --name "$UAMI_NAME" \
             --query clientId -o tsv)

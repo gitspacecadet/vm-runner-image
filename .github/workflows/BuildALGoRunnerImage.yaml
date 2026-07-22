@@ -90,6 +90,20 @@ jobs:
       skip_build: ${{ steps.precheck.outputs.skip_build }}
 
     steps:
+      # Bootstrap-runner defense (TF doc 34): prepend the CSE-installed tool
+      # dirs to this job's PATH in case the runner service booted with a stale
+      # machine-PATH snapshot. shell: powershell (5.1) always resolves on
+      # Windows; no-op on gallery images where the dirs are already on PATH.
+      - name: Ensure bootstrap tool paths
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          @('C:\Program Files\PowerShell\7',
+            'C:\Program Files\Git\bin',
+            'C:\Program Files\Microsoft SDKs\Azure\CLI2\wbin') | ForEach-Object {
+            if (Test-Path $_) { Add-Content -Path $env:GITHUB_PATH -Value $_ }
+          }
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -439,6 +453,17 @@ jobs:
       contents: read
 
     steps:
+      # Bootstrap-runner defense; see build-image job for rationale.
+      - name: Ensure bootstrap tool paths
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          @('C:\Program Files\PowerShell\7',
+            'C:\Program Files\Git\bin',
+            'C:\Program Files\Microsoft SDKs\Azure\CLI2\wbin') | ForEach-Object {
+            if (Test-Path $_) { Add-Content -Path $env:GITHUB_PATH -Value $_ }
+          }
+
       - name: Azure Login (OIDC)
         uses: azure/login@v2
         with:
@@ -514,6 +539,17 @@ jobs:
       contents: read
 
     steps:
+      # Bootstrap-runner defense; see build-image job for rationale.
+      - name: Ensure bootstrap tool paths
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          @('C:\Program Files\PowerShell\7',
+            'C:\Program Files\Git\bin',
+            'C:\Program Files\Microsoft SDKs\Azure\CLI2\wbin') | ForEach-Object {
+            if (Test-Path $_) { Add-Content -Path $env:GITHUB_PATH -Value $_ }
+          }
+
       - name: Azure Login (OIDC)
         uses: azure/login@v2
         with:
@@ -558,6 +594,17 @@ jobs:
       contents: write
 
     steps:
+      # Bootstrap-runner defense; see build-image job for rationale.
+      - name: Ensure bootstrap tool paths
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          @('C:\Program Files\PowerShell\7',
+            'C:\Program Files\Git\bin',
+            'C:\Program Files\Microsoft SDKs\Azure\CLI2\wbin') | ForEach-Object {
+            if (Test-Path $_) { Add-Content -Path $env:GITHUB_PATH -Value $_ }
+          }
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -640,13 +687,17 @@ jobs:
   #   * NEVER `az group delete` the build RG — it is TF-managed
   #     (terraform/image-build.tf) and carries the shared UAMI's scoped
   #     Contributor grant. Deleting it = TF drift + next build 403s.
-  #   * Same-workflow ordering (needs: build-image + if: always()) means we
-  #     never race our own live build. Do not add a scheduled trigger to this
-  #     job without a build-in-progress guard.
+  #   * Must run AFTER publish-to-gallery (needs both), not just build-image:
+  #     the freshly-captured managed image sits in the build RG until the
+  #     publish job copies it into the SIG — a sweep racing publish would
+  #     delete the image mid-copy. if: always() still runs the sweep when
+  #     build/publish fail or skip, which is exactly the residue case.
+  #   * Do not add a scheduled trigger to this job without a
+  #     build-in-progress guard.
   # ============================================================================
   cleanup:
     name: Cleanup Build Residue
-    needs: build-image
+    needs: [build-image, publish-to-gallery]
     runs-on: ${{ inputs.runner_pool || 'self-hosted' }}
     if: always()
     timeout-minutes: 15
@@ -656,6 +707,17 @@ jobs:
       contents: read
 
     steps:
+      # Bootstrap-runner defense; see build-image job for rationale.
+      - name: Ensure bootstrap tool paths
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          @('C:\Program Files\PowerShell\7',
+            'C:\Program Files\Git\bin',
+            'C:\Program Files\Microsoft SDKs\Azure\CLI2\wbin') | ForEach-Object {
+            if (Test-Path $_) { Add-Content -Path $env:GITHUB_PATH -Value $_ }
+          }
+
       - name: Azure Login (OIDC)
         uses: azure/login@v2
         with:

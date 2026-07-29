@@ -36,14 +36,13 @@ source "azure-arm" "image" {
   winrm_timeout                          = var.winrm_timeout
   winrm_username                         = var.winrm_username
 
-  shared_image_gallery_destination {
-    subscription                         = var.subscription_id
-    gallery_name                         = var.gallery_name
-    resource_group                       = var.gallery_resource_group_name
-    image_name                           = var.gallery_image_name
-    image_version                        = var.gallery_image_version
-    storage_account_type                 = var.gallery_storage_account_type
-  }
+  # Gallery publish removed from Packer (2026-06-14): the runtime UAMI that authenticates
+  # this build has only Contributor scoped to AZURE_BUILD_RESOURCE_GROUP, NOT gallery write.
+  # A separate publish-to-gallery job in BuildALGoRunnerImage.yaml runs on OIDC as the
+  # image-builder UAMI (sub Contributor) and calls `az sig image-version create` against
+  # the captured managed image. This keeps gallery write off the high-blast-radius runtime
+  # identity (assumable by every CI job on the pool via IMDS).
+  # See gh-vmss-img-runners FromVmImageAgent doc 15 (2026-06-14) for the RBAC rationale.
 
   dynamic "azure_tag" {
     for_each = var.azure_tags

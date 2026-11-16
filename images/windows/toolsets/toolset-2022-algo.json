@@ -14,7 +14,7 @@
         { "name": "DockerMsftProvider" },
         { "name": "MarkdownPS" },
         { "name": "Pester", "versions": ["5.7.1"] },
-        { "name": "PowerShellGet" },
+        { "name": "PowerShellGet", "versions": ["2.2.5"] },
         { "name": "PSScriptAnalyzer" },
         { "name": "PSWindowsUpdate" }
     ],

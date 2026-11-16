@@ -247,11 +247,13 @@ build {
   # Phase 12: Cleanup and tests
   # NOTE: Using RunAll-ALGo-Tests.ps1 instead of RunAll-Tests.ps1
   # This only tests tools included in the minimal AL-Go toolset
+  # NOTE: Using Install-WindowsUpdatesAfterReboot-ALGo.ps1, which starts wuauserv
+  # before waiting; without it the post-reboot event 19 never lands (build 43877564118)
   provisioner "powershell" {
     pause_before     = "2m0s"
     environment_vars = ["IMAGE_FOLDER=${var.image_folder}", "TEMP_DIR=${var.temp_dir}"]
     scripts = [
-      "${path.root}/../scripts/build/Install-WindowsUpdatesAfterReboot.ps1",
+      "${path.root}/../scripts/build/Install-WindowsUpdatesAfterReboot-ALGo.ps1",
       "${path.root}/../scripts/build/Invoke-Cleanup.ps1",
       "${path.root}/../scripts/tests/RunAll-ALGo-Tests.ps1"
     ]

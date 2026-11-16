@@ -64,6 +64,9 @@
     "node": {
         "default": "22.*"
     },
+    "npm": {
+        "global_packages": []
+    },
     "pwsh": {
         "version": "7.6"
     }

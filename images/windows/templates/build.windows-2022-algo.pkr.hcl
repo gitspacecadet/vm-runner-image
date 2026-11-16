@@ -25,9 +25,13 @@ build {
   }
 
   # Phase 2: Copy files to image
+  # NOTE: max_retries + pause_before guard the winrmcp upload. Build 43927063008
+  # failed restoring a scripts file 15 s after WinRM came up; later runs passed.
   provisioner "file" {
-    destination = "${var.image_folder}\\"
-    sources     = [
+    pause_before = "1m0s"
+    max_retries  = 3
+    destination  = "${var.image_folder}\\"
+    sources = [
       "${path.root}/../assets",
       "${path.root}/../scripts",
       "${path.root}/../toolsets"

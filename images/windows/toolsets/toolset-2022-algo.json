@@ -6,7 +6,8 @@
             "arch": "x64",
             "platform" : "win32",
             "versions": [
-                "20.*"
+                "22.*",
+                "24.*"
             ]
         }
     ],
@@ -61,7 +62,7 @@
         "warmup": false
     },
     "node": {
-        "default": "20.*"
+        "default": "22.*"
     },
     "pwsh": {
         "version": "7.6"

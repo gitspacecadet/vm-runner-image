@@ -23,6 +23,12 @@ try {
         }
     }
 
+    # Fail loudly when the toolset pins a line metadata.json no longer lists as LTS
+    # (7.4 dropped out on EOL in Nov 2026 and surfaced as a null-Path Split-Path error).
+    if (-not $downloadUrl) {
+        throw "No PowerShell LTS release matching '$pwshMajorMinor' in metadata.json LTSReleaseTag ($($releases -join ', ')). Update pwsh.version in the toolset."
+    }
+
     $installerName = Split-Path $downloadUrl -Leaf
     $externalHash = Get-ChecksumFromUrl -Type "SHA256" `
         -Url ($downloadUrl -replace $installerName, "hashes.sha256") `

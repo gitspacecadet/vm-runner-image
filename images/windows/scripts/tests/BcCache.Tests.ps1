@@ -1,7 +1,18 @@
 ################################################################################
 # BcCache.Tests.ps1
 # Pester tests to validate Business Central cache was created correctly
+#
+# BC_CACHE_SKIP=true (Packer var bc_cache_skip) opts out of the my: bake and
+# the smoke container, so the cache dir, metadata and my: image never exist.
+# Those checks are skipped in that case. The generic BC image (toolset
+# docker.images) and BcContainerHelper are installed either way, so their
+# checks always run. Truthy values match Create-BcImage.ps1 /
+# Smoke-BcContainer.ps1 exactly.
 ################################################################################
+
+BeforeDiscovery {
+    $bcCacheSkip = [bool]($env:BC_CACHE_SKIP -and $env:BC_CACHE_SKIP.ToString().ToLower() -in @('1','true','yes','y'))
+}
 
 Describe "Business Central Cache" {
     BeforeAll {
@@ -9,7 +20,7 @@ Describe "Business Central Cache" {
         $metadataPath = Join-Path $cacheDir "bc-cache-metadata.json"
     }
 
-    Context "Cache Directory" {
+    Context "Cache Directory" -Skip:$bcCacheSkip {
         It "Cache directory exists" {
             Test-Path $cacheDir | Should -BeTrue
         }
@@ -19,7 +30,7 @@ Describe "Business Central Cache" {
         }
     }
 
-    Context "Metadata File" {
+    Context "Metadata File" -Skip:$bcCacheSkip {
         It "Metadata file exists" {
             Test-Path $metadataPath | Should -BeTrue
         }
@@ -44,7 +55,7 @@ Describe "Business Central Cache" {
             $bcImages | Should -Not -BeNullOrEmpty
         }
 
-        It "Custom BC image with 'my' prefix exists" {
+        It "Custom BC image with 'my' prefix exists" -Skip:$bcCacheSkip {
             $images = docker images --format "{{.Repository}}"
             $myImages = $images | Where-Object { $_ -eq "my" }
             $myImages | Should -Not -BeNullOrEmpty

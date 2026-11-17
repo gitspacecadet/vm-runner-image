@@ -253,9 +253,11 @@ build {
   # This only tests tools included in the minimal AL-Go toolset
   # NOTE: Using Install-WindowsUpdatesAfterReboot-ALGo.ps1, which starts wuauserv
   # before waiting; without it the post-reboot event 19 never lands (build 43877564118)
+  # BC_CACHE_SKIP reaches the tests so BcCache.Tests.ps1 skips the bake-only
+  # checks when the my: bake was opted out (bc_cache_skip=true).
   provisioner "powershell" {
     pause_before     = "2m0s"
-    environment_vars = ["IMAGE_FOLDER=${var.image_folder}", "TEMP_DIR=${var.temp_dir}"]
+    environment_vars = ["IMAGE_FOLDER=${var.image_folder}", "TEMP_DIR=${var.temp_dir}", "BC_CACHE_SKIP=${var.bc_cache_skip}"]
     scripts = [
       "${path.root}/../scripts/build/Install-WindowsUpdatesAfterReboot-ALGo.ps1",
       "${path.root}/../scripts/build/Invoke-Cleanup.ps1",

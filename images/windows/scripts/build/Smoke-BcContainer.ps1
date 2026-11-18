@@ -94,23 +94,44 @@ try {
 	$createElapsed = (Get-Date) - $createStart
 	Write-Host "[BC SMOKE] Container created in $([Math]::Round($createElapsed.TotalSeconds,1))s"
 
-	# Service-tier reachability check -- BcContainerHelper's Test-BcContainer
-	# is the canonical "is it up?" gate. If this returns false, the container
-	# is up but BC service tier hasn't bound yet.
+	# Service-tier check (item 5d). The old loop called Test-BcContainer with a
+	# non-existent -doNotCheckHealth switch (silently dropped: it is not an
+	# advanced function) and ignored its result, so it always passed at once.
+	# Now three real checks, each cheap; a ready container passes on the first
+	# pass (a few seconds, the docker exec), so the 2-min budget is only spent
+	# when something is actually wrong:
+	#   1. the container is running (docker inspect, free)
+	#   2. its Docker health is not 'unhealthy' (docker inspect, free)
+	#   3. the BC service tier Windows service is Running inside it (docker exec)
 	$reachable = $false
+	$lastProblem = 'not checked yet'
 	$deadline = (Get-Date).AddMinutes(2)
+	# PS 5.1: under 'Stop', a docker stderr line merged by 2>&1 becomes a
+	# terminating NativeCommandError. Judge by exit code/output instead.
+	$savedEap = $ErrorActionPreference
+	$ErrorActionPreference = 'Continue'
 	while ((Get-Date) -lt $deadline) {
-		try {
-			Test-BcContainer -containerName $containerName -doNotCheckHealth | Out-Null
-			$reachable = $true
-			break
-		} catch {
-			Start-Sleep -Seconds 5
+		$state = (docker inspect -f '{{.State.Running}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' $containerName 2>&1 | Out-String).Trim()
+		$running, $health = $state -split '\|', 2
+		if ($LASTEXITCODE -ne 0 -or $running -ne 'true') {
+			$lastProblem = "container not running (docker inspect: $state)"
+		} elseif ($health -eq 'unhealthy') {
+			$lastProblem = 'container health is unhealthy'
+		} else {
+			$nst = (docker exec $containerName powershell -NoProfile -Command "(Get-Service -Name 'MicrosoftDynamicsNavServer*' | Where-Object Status -eq 'Running' | Measure-Object).Count" 2>&1 | Out-String).Trim()
+			if ($LASTEXITCODE -eq 0 -and $nst -match '^[1-9]\d*$') {
+				Write-Host "[BC SMOKE] Container running (health: $health); $nst BC service tier service(s) Running"
+				$reachable = $true
+				break
+			}
+			$lastProblem = "BC service tier not Running inside the container (docker exec rc=$LASTEXITCODE, output: $nst)"
 		}
+		Start-Sleep -Seconds 5
 	}
+	$ErrorActionPreference = $savedEap
 
 	if (-not $reachable) {
-		throw "[BC SMOKE] Service tier never became reachable inside the 2-min window after container start"
+		throw "[BC SMOKE] Service tier check failed inside the 2-min window after container start: $lastProblem"
 	}
 
 	Write-Host "[BC SMOKE] Service tier reachable. Verifying basic container info..."

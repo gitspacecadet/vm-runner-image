@@ -9,8 +9,9 @@
 ##  Behavior:
 ##   - Skips if BC_CACHE_SKIP=true (same gate as Create-BcImage.ps1)
 ##   - Reads bc-cache-metadata.json for the image name
-##   - Creates a throwaway container (name: bcsmoke), waits up to 6 min for
-##     service tier reachability, tears down on success or failure
+##   - Creates a container (name: bcsmoke) with a random per-image credential,
+##     waits up to 6 min for service tier reachability, then KEEPS it by default
+##     (keep-container experiment; BC_SMOKE_REMOVE=true removes it)
 ##   - Fails the Packer build if container won't start (treats image as broken)
 ##
 ##  Trade-off (project-owner-approved 2026-06-08 as Option A -- smoke-test only):
@@ -47,9 +48,25 @@ Import-Module BcContainerHelper -Force
 $containerName = 'bcsmoke'
 $cleanupRequired = $false
 
-# Throwaway password -- never persisted; container is removed at end.
-$smokePassword = ConvertTo-SecureString -String 'P@ssword$1' -AsPlainText -Force
-$smokeCredential = New-Object System.Management.Automation.PSCredential('admin', $smokePassword)
+# Per-image random credential (operator ruling 2026-11-18, item 5c). It replaces
+# the old fixed 'admin' password, which every runner carried because the smoke
+# container is kept (see the finally block).
+#   - Generated here, held only in memory, never written to disk or the log.
+#   - BcContainerHelper hands it to the container AES-encrypted with a one-time
+#     key that both the host and the container delete, so it can't be recovered.
+#   - Nothing needs it later: the checks below don't authenticate, the container
+#     restarts without it, and CI/CD jobs create their own containers.
+function New-SmokePassword {
+	$bytes = New-Object Byte[] 15
+	$rng = [System.Security.Cryptography.RNGCryptoServiceProvider]::Create()
+	try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
+	# 15 bytes -> exactly 20 base64 chars (no '=' padding). '+' and '/' map to
+	# letters so the value is safe in any quoting. The fixed 'Aa1!' tail
+	# guarantees the upper/lower/digit/symbol classes BC and SQL require.
+	$core = [Convert]::ToBase64String($bytes).Replace('+', 'k').Replace('/', 'q')
+	return ConvertTo-SecureString -String ($core + 'Aa1!') -AsPlainText -Force
+}
+$smokeCredential = New-Object System.Management.Automation.PSCredential('admin', (New-SmokePassword))
 
 try {
 	Write-Host "[BC SMOKE] Creating container '$containerName' from $imageName"

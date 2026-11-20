@@ -12,8 +12,17 @@
 # - Target size: ~35-40GB (vs 100GB+)
 ################################################################################
 
+variable "algo_payload_temp_dir" {
+  type    = string
+  default = env("TEMP")
+  validation {
+    condition     = length(var.algo_payload_temp_dir) > 0
+    error_message = "TEMP must identify the Windows Packer host's temp directory."
+  }
+}
+
 locals {
-  algo_payload_archive = "${env("TEMP")}/algo-image-payload-${uuidv4()}.tar"
+  algo_payload_archive = "${var.algo_payload_temp_dir}/algo-image-payload-${uuidv4()}.tar"
 }
 
 build {

@@ -12,6 +12,10 @@
 # - Target size: ~35-40GB (vs 100GB+)
 ################################################################################
 
+locals {
+  algo_payload_archive = "${env("TEMP")}/algo-image-payload-${uuidv4()}.tar"
+}
+
 build {
   sources = ["source.azure-arm.image"]
   name = "windows-2022-algo"
@@ -24,23 +28,57 @@ build {
     ]
   }
 
-  # Phase 2: Copy files to image
-  # NOTE: max_retries + pause_before guard the winrmcp upload. Build 43927063008
-  # failed restoring a scripts file 15 s after WinRM came up; later runs passed.
-  provisioner "file" {
-    pause_before = "1m0s"
-    max_retries  = 3
-    destination  = "${var.image_folder}\\"
-    sources = [
-      "${path.root}/../assets",
-      "${path.root}/../scripts",
-      "${path.root}/../toolsets"
+  # Phase 2: Copy one archive to reduce WinRM operations. The fault code behind
+  # previous winrmcp failures is unknown; retain the upload pause and retries.
+  # Host-side commands are Windows-only: explicitly use PowerShell, not cmd.
+  provisioner "shell-local" {
+    execute_command    = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "{{.Script}}"]
+    tempfile_extension = ".ps1"
+    inline = [
+      "$ErrorActionPreference = 'Stop'",
+      "& '${path.root}/../../../images.CI/windows/Pack-ImagePayload-ALGo.ps1' -TemplateRoot '${path.root}' -ArchivePath '${local.algo_payload_archive}'"
     ]
   }
 
   provisioner "file" {
-    destination = "${var.image_folder}\\scripts\\docs-gen\\"
-    source      = "${path.root}/../../../helpers/software-report-base"
+    pause_before = "1m0s"
+    max_retries  = 3
+    generated    = true
+    source       = local.algo_payload_archive
+    destination  = "${var.image_folder}\\image-payload.tar"
+  }
+
+  provisioner "shell-local" {
+    execute_command    = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "{{.Script}}"]
+    tempfile_extension = ".ps1"
+    inline = [
+      "$ErrorActionPreference = 'Stop'",
+      "Remove-Item -LiteralPath '${local.algo_payload_archive}' -Force"
+    ]
+  }
+
+  error-cleanup-provisioner "shell-local" {
+    execute_command    = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "{{.Script}}"]
+    tempfile_extension = ".ps1"
+    inline = [
+      "$ErrorActionPreference = 'Stop'",
+      "if (Test-Path -LiteralPath '${local.algo_payload_archive}') { Remove-Item -LiteralPath '${local.algo_payload_archive}' -Force }"
+    ]
+  }
+
+  provisioner "powershell" {
+    inline = [
+      "$ErrorActionPreference = 'Stop'",
+      "try {",
+      "  & 'C:\\Windows\\System32\\tar.exe' -xf '${var.image_folder}\\image-payload.tar' -C '${var.image_folder}'",
+      "  if ($LASTEXITCODE -ne 0) { throw \"tar expand failed with exit code $LASTEXITCODE\" }",
+      "  $expected = [int](Get-Content -LiteralPath '${var.image_folder}\\payload-file-count.txt' -Raw)",
+      "  $actual = @(Get-ChildItem -LiteralPath '${var.image_folder}\\assets', '${var.image_folder}\\scripts', '${var.image_folder}\\toolsets' -File -Recurse -Force).Count",
+      "  if ($expected -le 0 -or $actual -ne $expected) { throw \"Payload file count mismatch: expected $expected, expanded $actual\" }",
+      "  Remove-Item -LiteralPath '${var.image_folder}\\image-payload.tar', '${var.image_folder}\\payload-file-count.txt' -Force",
+      "  Write-Host \"expanded $actual files\"",
+      "} catch { Write-Host $_; exit 1 }"
+    ]
   }
 
   # Phase 3: Organize files and use our minimal toolset
@@ -164,7 +202,7 @@ build {
     environment_vars = ["IMAGE_FOLDER=${var.image_folder}", "TEMP_DIR=${var.temp_dir}"]
     scripts = [
       "${path.root}/../scripts/build/Install-AzureCli.ps1",
-      "${path.root}/../scripts/build/Install-ChocolateyPackages.ps1"
+      "${path.root}/../scripts/build/Install-ChocolateyPackages-ALGo.ps1"
     ]
   }
 

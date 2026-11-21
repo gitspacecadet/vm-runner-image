@@ -30,6 +30,10 @@ if ($env:BC_CACHE_SKIP -and $env:BC_CACHE_SKIP.ToString().ToLower() -in @('1','t
 }
 
 Write-Host "[BC CACHE] Starting Business Central cache priming" -ForegroundColor Cyan
+. (Join-Path (Get-Module ImageHelpers).ModuleBase 'BuildImageTelemetry-ALGo.ps1')
+$bakeStage = Start-BuildImageStage -Name 'bc-bake' -Sample
+$bakeSucceeded = $false
+try {
 
 function Invoke-Section {
 	param(
@@ -37,8 +41,13 @@ function Invoke-Section {
 		[Parameter(Mandatory)][scriptblock]$Action
 	)
 	Write-Host "[BC CACHE] >>> $Name" -ForegroundColor Yellow
-	& $Action
-	Write-Host "[BC CACHE] <<< $Name" -ForegroundColor DarkYellow
+	$section = Start-BuildImageStage -Name $Name
+	$sectionSucceeded = $false
+	try {
+		& $Action
+		$sectionSucceeded = $true
+		Write-Host "[BC CACHE] <<< $Name" -ForegroundColor DarkYellow
+	} finally { Stop-BuildImageStage -Stage $section -Succeeded $sectionSucceeded }
 }
 
 Invoke-Section -Name 'Install BcContainerHelper' -Action {
@@ -56,6 +65,12 @@ Write-Host "[BC CACHE] Host OS Version: $hostOsVersion"
 
 $genericImageName = Get-BestGenericImageName -hostOsVersion $hostOsVersion
 Write-Host "[BC CACHE] Generic image determined: $genericImageName"
+Write-BuildImageEvidence 'bc-inputs' @{
+	hostOsVersion = $hostOsVersion
+	osBuild = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').UBR
+	helperVersion = (Get-Module BcContainerHelper).Version.ToString()
+	genericImage = $genericImageName
+}
 
 # Verify the generic BC image is already present (pulled via toolset docker.images)
 Invoke-Section -Name 'Verify generic BC image' -Action {
@@ -63,11 +78,14 @@ Invoke-Section -Name 'Verify generic BC image' -Action {
 	if ($existingImage) {
 		Write-Host "[BC CACHE] Generic image already present: $genericImageName (pulled via toolset)"
 	} else {
+		Write-Warning "[BC CACHE] Additional generic pull required after Windows Updates: $genericImageName"
 		Write-Host "[BC CACHE] Generic image not found, pulling: $genericImageName"
 		docker pull $genericImageName
 		if ($LASTEXITCODE -ne 0) { throw "Failed to pull generic BC image $genericImageName (exit $LASTEXITCODE)" }
 	}
 }
+$genericIdentity = Get-BuildImageDockerIdentity -Image $genericImageName
+Write-BuildImageEvidence 'generic-image' $genericIdentity
 
 $country = if ($env:BC_COUNTRY) { $env:BC_COUNTRY } else { 'us' }
 $type    = if ($env:BC_TYPE) { $env:BC_TYPE } else { 'Sandbox' }
@@ -81,6 +99,12 @@ Invoke-Section -Name 'Resolve artifact URL' -Action {
 	$script:artifactUrl = Get-BCArtifactUrl -type $type -country $country -select $select
 	if (-not $script:artifactUrl) { throw 'Artifact URL resolution returned empty result' }
 	Write-Host "[BC CACHE] Artifact URL: $script:artifactUrl"
+	Write-BuildImageEvidence 'artifact-inputs' @{
+		artifact = ([Uri]$script:artifactUrl).GetLeftPart([UriPartial]::Path)
+		country = $country; type = $type; select = $select; cacheDir = $cacheDir
+		cacheEntriesBeforeDownload = @(Get-ChildItem -LiteralPath $cacheDir -Force).Count
+		forceDownload = $true
+	}
 }
 
 Invoke-Section -Name 'Download artifacts' -Action {
@@ -111,6 +135,8 @@ Invoke-Section -Name 'Build BC Docker Image' -Action {
 
 	Write-Host "[BC CACHE] Docker image built successfully"
 	docker images $script:fullImageName
+	$script:bakedIdentity = Get-BuildImageDockerIdentity -Image $script:fullImageName
+	Write-BuildImageEvidence 'baked-image' $script:bakedIdentity
 }
 
 Invoke-Section -Name 'Write metadata' -Action {
@@ -118,12 +144,16 @@ Invoke-Section -Name 'Write metadata' -Action {
 		timestampUtc = (Get-Date).ToUniversalTime().ToString('o')
 		hostOsVersion = $hostOsVersion
 		genericImage = $genericImageName
+		genericImageId = $genericIdentity.id
+		genericImageDigests = $genericIdentity.repoDigests
+		bcContainerHelperVersion = (Get-Module BcContainerHelper).Version.ToString()
 		artifactUrl = $script:artifactUrl
 		country = $country
 		type = $type
 		select = $select
 		cacheDir = $cacheDir
 		dockerImage = $script:fullImageName
+		dockerImageId = $script:bakedIdentity.id
 	}
 	$metadataPath = Join-Path $cacheDir 'bc-cache-metadata.json'
 	$metadata | ConvertTo-Json -Depth 5 | Out-File -FilePath $metadataPath -Encoding UTF8
@@ -131,3 +161,18 @@ Invoke-Section -Name 'Write metadata' -Action {
 }
 
 Write-Host "[BC CACHE] Completed Business Central cache priming" -ForegroundColor Green
+$bakeSucceeded = $true
+} finally {
+	# Docker retains a bounded event history; absence alone is not proof of no pull.
+	try {
+	$pulls = @(docker events --since $bakeStage.StartUtc.ToString('o') --until ([DateTime]::UtcNow.ToString('o')) --filter type=image --filter event=pull --format '{{json .}}')
+	if ($LASTEXITCODE -eq 0) {
+		foreach ($pull in $pulls) {
+			$event = $pull | ConvertFrom-Json
+			Write-BuildImageEvidence 'docker-pull' @{ imageId = $event.id; time = $event.time }
+			Write-Warning '[BC CACHE] Docker image pull event during bake; compare generic identity and build log.'
+		}
+	} else { Write-Warning '[BC CACHE] Docker pull history unavailable.' }
+	} catch { Write-Warning '[BC CACHE] Docker pull history unavailable.' }
+	finally { Stop-BuildImageStage -Stage $bakeStage -Succeeded $bakeSucceeded }
+}

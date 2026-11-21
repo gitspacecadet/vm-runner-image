@@ -29,6 +29,10 @@ if ($env:BC_CACHE_SKIP -and $env:BC_CACHE_SKIP.ToString().ToLower() -in @('1','t
 }
 
 Write-Host "[BC SMOKE] Starting Business Central container smoke-test" -ForegroundColor Cyan
+. (Join-Path (Get-Module ImageHelpers).ModuleBase 'BuildImageTelemetry-ALGo.ps1')
+$smokeStage = Start-BuildImageStage -Name 'bc-smoke' -Sample
+$smokeSucceeded = $false
+try {
 
 $cacheDir = if ($env:BC_CACHE_DIR) { $env:BC_CACHE_DIR } else { 'C:\bcartifacts.cache' }
 $metadataPath = Join-Path $cacheDir 'bc-cache-metadata.json'
@@ -189,3 +193,5 @@ finally {
 }
 
 Write-Host "[BC SMOKE] Completed Business Central container smoke-test" -ForegroundColor Green
+$smokeSucceeded = $true
+} finally { Stop-BuildImageStage -Stage $smokeStage -Succeeded $smokeSucceeded }

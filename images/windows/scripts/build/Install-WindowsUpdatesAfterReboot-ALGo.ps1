@@ -2,8 +2,8 @@
 ##  File: Install-WindowsUpdatesAfterReboot-ALGo.ps1
 ##  Desc: Waits for Windows Updates to finish installing after reboot.
 ##        Fork-owned copy of upstream Install-WindowsUpdatesAfterReboot.ps1,
-##        which stays byte-identical for upstream sync. Only difference: it
-##        starts wuauserv before waiting.
+##        which stays byte-identical for upstream sync. Starts wuauserv before
+##        waiting and records durable verification boundaries/update inputs.
 ##
 ##  Why:  The update agent writes event 19 (installed) for a reboot-requiring
 ##        update during its first pass after the reboot. After the reboot nothing
@@ -17,6 +17,10 @@
 ##        the reboot.
 ################################################################################
 
+. (Join-Path (Get-Module ImageHelpers).ModuleBase 'BuildImageTelemetry-ALGo.ps1')
+$updateStage = Start-BuildImageStage -Name 'wu-post-reboot' -Sample
+$updateSucceeded = $false
+try {
 Write-Host "Starting wuauserv so the update agent records post-reboot results"
 Start-Service -Name wuauserv -PassThru -ErrorAction Stop | Out-Host
 
@@ -31,3 +35,11 @@ Invoke-ScriptBlockWithRetry -RetryCount 10 -RetryIntervalSeconds 120 -Command {
         throw "Windows updates are still installing: $title"
     }
 }
+Write-BuildImageEvidence 'windows-updates' @{
+    states = @(Get-WindowsUpdateStates | Select-Object Title, State)
+    hotfixes = @(Get-HotFix | Select-Object -ExpandProperty HotFixID)
+    osVersion = [Environment]::OSVersion.Version.ToString()
+    ubr = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').UBR
+}
+$updateSucceeded = $true
+} finally { Stop-BuildImageStage -Stage $updateStage -Succeeded $updateSucceeded }

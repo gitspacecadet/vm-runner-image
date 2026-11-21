@@ -247,35 +247,7 @@ build {
     ]
   }
 
-  # Phase 10: BC Container Caching (THE KEY OPTIMIZATION)
-  provisioner "powershell" {
-    environment_vars = [
-      "IMAGE_FOLDER=${var.image_folder}",
-      "TEMP_DIR=${var.temp_dir}",
-      "BC_COUNTRY=${var.bc_country}",
-      "BC_TYPE=${var.bc_type}",
-      "BC_SELECT=${var.bc_select}",
-      "BC_CACHE_SKIP=${var.bc_cache_skip}"
-    ]
-    scripts = [
-      "${path.root}/../scripts/build/Create-BcImage.ps1"
-    ]
-  }
-
-  # Phase 10.5: BC Container smoke-test (validates Phase 10's image actually starts)
-  # Project-owner-approved 2026-06-08 as Option A: smoke-test only, no pre-warm.
-  # Adds ~3-5 min wall-clock; catches broken-image bugs at bake time.
-  provisioner "powershell" {
-    environment_vars = [
-      "BC_CACHE_DIR=C:\\bcartifacts.cache",
-      "BC_CACHE_SKIP=${var.bc_cache_skip}"
-    ]
-    scripts = [
-      "${path.root}/../scripts/build/Smoke-BcContainer.ps1"
-    ]
-  }
-
-  # Phase 11: Windows Updates and final configuration
+  # Phase 10: Windows Updates and final configuration
   provisioner "powershell" {
     elevated_password = "${var.install_password}"
     elevated_user     = "${var.install_user}"
@@ -295,18 +267,49 @@ build {
     restart_timeout       = "30m"
   }
 
-  # Phase 12: Cleanup and tests
-  # NOTE: Using RunAll-ALGo-Tests.ps1 instead of RunAll-Tests.ps1
-  # This only tests tools included in the minimal AL-Go toolset
+  # Phase 11: Complete post-reboot update verification before the BC experiment.
   # NOTE: Using Install-WindowsUpdatesAfterReboot-ALGo.ps1, which starts wuauserv
   # before waiting; without it the post-reboot event 19 never lands (build 43877564118)
-  # BC_CACHE_SKIP reaches the tests so BcCache.Tests.ps1 skips the bake-only
-  # checks when the my: bake was opted out (bc_cache_skip=true).
   provisioner "powershell" {
     pause_before     = "2m0s"
     environment_vars = ["IMAGE_FOLDER=${var.image_folder}", "TEMP_DIR=${var.temp_dir}", "BC_CACHE_SKIP=${var.bc_cache_skip}"]
     scripts = [
-      "${path.root}/../scripts/build/Install-WindowsUpdatesAfterReboot-ALGo.ps1",
+      "${path.root}/../scripts/build/Install-WindowsUpdatesAfterReboot-ALGo.ps1"
+    ]
+  }
+
+  # Phase 11a: BC bake on the patched host (timing experiment; savings unproven).
+  # The generic toolset pull remains in Install-Docker.ps1. Preserve BC inputs.
+  provisioner "powershell" {
+    environment_vars = [
+      "IMAGE_FOLDER=${var.image_folder}",
+      "TEMP_DIR=${var.temp_dir}",
+      "BC_COUNTRY=${var.bc_country}",
+      "BC_TYPE=${var.bc_type}",
+      "BC_SELECT=${var.bc_select}",
+      "BC_CACHE_SKIP=${var.bc_cache_skip}"
+    ]
+    scripts = [
+      "${path.root}/../scripts/build/Create-BcImage.ps1"
+    ]
+  }
+
+  # Phase 11b: Preserve the real smoke assertions and the kept bcsmoke container.
+  provisioner "powershell" {
+    environment_vars = [
+      "BC_CACHE_DIR=C:\\bcartifacts.cache",
+      "BC_CACHE_SKIP=${var.bc_cache_skip}"
+    ]
+    scripts = [
+      "${path.root}/../scripts/build/Smoke-BcContainer.ps1"
+    ]
+  }
+
+  # Phase 12: Cleanup and the full existing AL-Go suite. Cleanup removes TEMP
+  # and AllUsersAllHosts, so BC must finish first. Keep BC_CACHE_SKIP for tests.
+  provisioner "powershell" {
+    environment_vars = ["IMAGE_FOLDER=${var.image_folder}", "TEMP_DIR=${var.temp_dir}", "BC_CACHE_SKIP=${var.bc_cache_skip}"]
+    scripts = [
       "${path.root}/../scripts/build/Invoke-Cleanup.ps1",
       "${path.root}/../scripts/tests/RunAll-ALGo-Tests.ps1"
     ]
@@ -363,6 +366,25 @@ build {
   }
 
   # Phase 15: Sysprep for generalization
+  # Verify preservation after the final reboot, before generalization/capture.
+  provisioner "powershell" {
+    environment_vars = ["BC_CACHE_SKIP=${var.bc_cache_skip}"]
+    scripts = ["${path.root}/../scripts/build/Test-BcPreservation-ALGo.ps1"]
+  }
+
+  provisioner "powershell" {
+    inline = [
+      "Compress-Archive -Path 'C:\\ProgramData\\BuildImageEvidence\\*' -DestinationPath 'C:\\ProgramData\\buildimage-evidence.zip' -Force -ErrorAction Stop"
+    ]
+  }
+
+  # Download while the build VM exists; workflow-log copies also survive its deletion.
+  provisioner "file" {
+    direction   = "download"
+    source      = "C:\\ProgramData\\buildimage-evidence.zip"
+    destination = "${path.root}/../buildimage-evidence.zip"
+  }
+
   provisioner "powershell" {
     inline = [
       "if( Test-Path $env:SystemRoot\\System32\\Sysprep\\unattend.xml ){ rm $env:SystemRoot\\System32\\Sysprep\\unattend.xml -Force}",

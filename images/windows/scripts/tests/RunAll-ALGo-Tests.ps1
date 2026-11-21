@@ -36,7 +36,8 @@ $algoTests = @(
     "Shell",                # PowerShell Core
     "Toolset",              # General toolset validation
     "VmssRunnerSetup",      # VMSS runner setup scripts pre-staging
-    "WindowsFeatures"       # Windows features
+    "WindowsFeatures-ALGo",  # Minimal feature contract; no WSL2 runtime
+    "BcPolicy-ALGo"         # Exact generic identity and process isolation
 )
 
 # Build the list of test file paths

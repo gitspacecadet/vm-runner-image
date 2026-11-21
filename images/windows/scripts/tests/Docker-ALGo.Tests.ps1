@@ -25,10 +25,11 @@ Describe "DockerWinCred" {
 
 Describe "DockerImages" {
     Context "docker images" {
-        $testCases = (Get-ToolsetContent).docker.images | ForEach-Object { @{ ImageName = $_ } }
+        $testCases = @((Get-Content 'C:\ProgramData\BcContainerHelper\BcContainerHelper.config.json' -Raw | ConvertFrom-Json).genericImageName) | ForEach-Object { @{ ImageName = $_ } }
 
         It "<ImageName>" -TestCases $testCases {
-            docker images "$ImageName" --format "{{.Repository}}" | Should -Not -BeNullOrEmpty
+            docker image inspect "$ImageName" --format "{{.Id}}" | Should -Match "^sha256:"
+            $LASTEXITCODE | Should -Be 0
         }
     }
 }

@@ -35,6 +35,15 @@ $bakeStage = Start-BuildImageStage -Name 'bc-bake' -Sample
 $bakeSucceeded = $false
 try {
 
+Invoke-ScriptBlockWithRetry -RetryCount 24 -RetryIntervalSeconds 5 -Command {
+    docker info --format '{{.ServerVersion}}'
+    if ($LASTEXITCODE -ne 0) { throw 'Docker API not ready before BC bake' }
+    if ((Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending') -or
+        (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired')) {
+        throw 'Required CBS/Windows Update reboot remains pending before BC bake'
+    }
+}
+
 function Invoke-Section {
 	param(
 		[Parameter(Mandatory)][string]$Name,
@@ -63,7 +72,10 @@ Invoke-Section -Name 'Install BcContainerHelper' -Action {
 $hostOsVersion = (Get-CimInstance -ClassName Win32_OperatingSystem).Version
 Write-Host "[BC CACHE] Host OS Version: $hostOsVersion"
 
+. (Join-Path (Get-Module ImageHelpers).ModuleBase 'BcPolicy-ALGo.ps1')
+$policy = Get-Content 'C:\ProgramData\BcContainerHelper\BcContainerHelper.config.json' -Raw | ConvertFrom-Json
 $genericImageName = Get-BestGenericImageName -hostOsVersion $hostOsVersion
+if ($genericImageName -ne $policy.genericImageName) { throw 'Imported helper selected a different generic base' }
 Write-Host "[BC CACHE] Generic image determined: $genericImageName"
 Write-BuildImageEvidence 'bc-inputs' @{
 	hostOsVersion = $hostOsVersion
@@ -74,7 +86,8 @@ Write-BuildImageEvidence 'bc-inputs' @{
 
 # Verify the generic BC image is already present (pulled via toolset docker.images)
 Invoke-Section -Name 'Verify generic BC image' -Action {
-	$existingImage = docker images --format "{{.Repository}}:{{.Tag}}" | Where-Object { $_ -eq $genericImageName }
+	$existingImage = docker image inspect $genericImageName --format '{{.Id}}' 2>$null
+    if ($LASTEXITCODE -ne 0) { $existingImage = $null }
 	if ($existingImage) {
 		Write-Host "[BC CACHE] Generic image already present: $genericImageName (pulled via toolset)"
 	} else {
@@ -86,6 +99,8 @@ Invoke-Section -Name 'Verify generic BC image' -Action {
 }
 $genericIdentity = Get-BuildImageDockerIdentity -Image $genericImageName
 Write-BuildImageEvidence 'generic-image' $genericIdentity
+if ($genericIdentity.repoDigests -notcontains $genericImageName) { throw 'Generic digest mismatch' }
+Assert-ALGoContainerCompatibility ([version]$hostOsVersion) ([version]$genericIdentity.osVersion)
 
 $country = if ($env:BC_COUNTRY) { $env:BC_COUNTRY } else { 'us' }
 $type    = if ($env:BC_TYPE) { $env:BC_TYPE } else { 'Sandbox' }
@@ -142,7 +157,7 @@ Invoke-Section -Name 'Build BC Docker Image' -Action {
 	$script:genericIdentityAfter = Get-BuildImageDockerIdentity -Image $genericImageName
 	Write-BuildImageEvidence 'generic-image-after-bake' $script:genericIdentityAfter
 	if ($script:genericIdentityAfter.id -ne $genericIdentity.id) {
-		Write-Warning '[BC CACHE] Generic image identity changed during bake; compare both digests and pull logs.'
+		throw '[BC CACHE] Immutable generic image identity changed during bake'
 	}
 }
 
@@ -151,6 +166,9 @@ Invoke-Section -Name 'Write metadata' -Action {
 		timestampUtc = (Get-Date).ToUniversalTime().ToString('o')
 		hostOsVersion = $hostOsVersion
 		genericImage = $genericImageName
+        isolation = 'process'
+        genericOsVersion = $genericIdentity.osVersion
+        hostUbr = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').UBR
 		genericImageBeforeBakeId = $genericIdentity.id
 		genericImageId = $script:genericIdentityAfter.id
 		genericImageDigests = $script:genericIdentityAfter.repoDigests

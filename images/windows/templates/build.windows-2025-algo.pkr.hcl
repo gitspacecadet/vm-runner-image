@@ -1,0 +1,373 @@
+# Matched 2025 treatment. Shared payload locals are declared in the 2022 AL-Go template.
+build {
+  sources = ["source.azure-arm.image"]
+  name = "windows-2025-algo"
+
+  # Phase 1: Setup directories
+  provisioner "powershell" {
+    inline = [
+      "if ('${var.image_os}' -ne 'win25' -or ${local.os_disk_size_gb} -ne 256) { throw 'This prototype path requires win25 and a 256-GiB OS disk' }",
+      "New-Item -Path ${var.image_folder} -ItemType Directory -Force",
+      "New-Item -Path ${var.temp_dir} -ItemType Directory -Force"
+    ]
+  }
+
+  # Phase 2: Copy one archive to reduce WinRM operations. The fault code behind
+  # previous winrmcp failures is unknown; retain the upload pause and retries.
+  # Host-side commands are Windows-only: explicitly use PowerShell, not cmd.
+  provisioner "shell-local" {
+    execute_command    = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "{{.Script}}"]
+    tempfile_extension = ".ps1"
+    inline = [
+      "$ErrorActionPreference = 'Stop'",
+      "& '${path.root}/../../../images.CI/windows/Pack-ImagePayload-ALGo.ps1' -TemplateRoot '${path.root}' -ArchivePath '${local.algo_payload_archive}'"
+    ]
+  }
+
+  provisioner "file" {
+    pause_before = "1m0s"
+    max_retries  = 3
+    generated    = true
+    source       = local.algo_payload_archive
+    destination  = "${var.image_folder}\\image-payload.tar"
+  }
+
+  provisioner "shell-local" {
+    execute_command    = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "{{.Script}}"]
+    tempfile_extension = ".ps1"
+    inline = [
+      "$ErrorActionPreference = 'Stop'",
+      "Remove-Item -LiteralPath '${local.algo_payload_archive}' -Force"
+    ]
+  }
+
+  error-cleanup-provisioner "shell-local" {
+    execute_command    = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "{{.Script}}"]
+    tempfile_extension = ".ps1"
+    inline = [
+      "$ErrorActionPreference = 'Stop'",
+      "if (Test-Path -LiteralPath '${local.algo_payload_archive}') { Remove-Item -LiteralPath '${local.algo_payload_archive}' -Force }"
+    ]
+  }
+
+  provisioner "powershell" {
+    inline = [
+      "$ErrorActionPreference = 'Stop'",
+      "try {",
+      "  & 'C:\\Windows\\System32\\tar.exe' -xf '${var.image_folder}\\image-payload.tar' -C '${var.image_folder}'",
+      "  if ($LASTEXITCODE -ne 0) { throw \"tar expand failed with exit code $LASTEXITCODE\" }",
+      "  $expected = [int](Get-Content -LiteralPath '${var.image_folder}\\payload-file-count.txt' -Raw)",
+      "  $actual = @(Get-ChildItem -LiteralPath '${var.image_folder}\\assets', '${var.image_folder}\\scripts', '${var.image_folder}\\toolsets' -File -Recurse -Force).Count",
+      "  if ($expected -le 0 -or $actual -ne $expected) { throw \"Payload file count mismatch: expected $expected, expanded $actual\" }",
+      "  Remove-Item -LiteralPath '${var.image_folder}\\image-payload.tar', '${var.image_folder}\\payload-file-count.txt' -Force",
+      "  Write-Host \"expanded $actual files\"",
+      "} catch { Write-Host $_; exit 1 }"
+    ]
+  }
+
+  # Phase 3: Organize files and use our minimal toolset
+  provisioner "powershell" {
+    inline = [
+      "Move-Item '${var.image_folder}\\assets\\post-gen' 'C:\\post-generation'",
+      "Remove-Item -Recurse '${var.image_folder}\\assets'",
+      "Move-Item '${var.image_folder}\\scripts\\docs-gen' '${var.image_folder}\\SoftwareReport'",
+      "Move-Item '${var.image_folder}\\scripts\\helpers' '${var.helper_script_folder}\\ImageHelpers'",
+      "New-Item -Type Directory -Path '${var.helper_script_folder}\\TestsHelpers\\'",
+      "Move-Item '${var.image_folder}\\scripts\\tests\\Helpers.psm1' '${var.helper_script_folder}\\TestsHelpers\\TestsHelpers.psm1'",
+      "Move-Item '${var.image_folder}\\scripts\\tests' '${var.image_folder}\\tests'",
+      # Preserve VMSS runner scripts before deleting scripts directory
+      "if (Test-Path '${var.image_folder}\\scripts\\vmss') { Move-Item '${var.image_folder}\\scripts\\vmss' '${var.image_folder}\\vmss-source' }",
+      "Remove-Item -Recurse '${var.image_folder}\\scripts'",
+      # Restore VMSS scripts for Install-RunnerSetupScript.ps1 to find
+      "if (Test-Path '${var.image_folder}\\vmss-source') { New-Item -Type Directory -Path '${var.image_folder}\\scripts' -Force | Out-Null; Move-Item '${var.image_folder}\\vmss-source' '${var.image_folder}\\scripts\\vmss' }",
+      # USE OUR MINIMAL TOOLSET instead of full toolset-2025.json
+      "Move-Item '${var.image_folder}\\toolsets\\toolset-2025-algo.json' '${var.image_folder}\\toolset.json'",
+      "Remove-Item -Recurse '${var.image_folder}\\toolsets'"
+    ]
+  }
+
+  # Phase 4: Create install user
+  provisioner "windows-shell" {
+    inline = [
+      "net user ${var.install_user} ${var.install_password} /add /passwordchg:no /passwordreq:yes /active:yes /Y",
+      "net localgroup Administrators ${var.install_user} /add",
+      "winrm set winrm/config/service/auth @{Basic=\"true\"}",
+      "winrm get winrm/config/service/auth"
+    ]
+  }
+
+  provisioner "powershell" {
+    inline = ["if (-not ((net localgroup Administrators) -contains '${var.install_user}')) { exit 1 }"]
+  }
+
+  provisioner "powershell" {
+    elevated_password = "${var.install_password}"
+    elevated_user     = "${var.install_user}"
+    inline            = ["bcdedit.exe /set TESTSIGNING ON"]
+  }
+
+  # Phase 5a: Setup ImageHelpers module in AllUsersAllHosts profile
+  # After Phase 3 moved helpers to module path, we need to ensure the module
+  # is imported in EVERY PowerShell session. Adding to AllUsersAllHosts profile
+  # makes helper functions (Get-ToolsetContent, Test-IsWin*, etc.) available.
+  # This is required because Packer runs each script in a separate PS session.
+  provisioner "powershell" {
+    inline = [
+      "Write-Host 'Setting up ImageHelpers module in PowerShell profile...'",
+      "$profilePath = $profile.AllUsersAllHosts",
+      "if (-not (Test-Path (Split-Path $profilePath))) { New-Item -Path (Split-Path $profilePath) -ItemType Directory -Force | Out-Null }",
+      "if (-not (Test-Path $profilePath)) { New-Item -Path $profilePath -ItemType File -Force | Out-Null }",
+      "'Import-Module ImageHelpers -Force -ErrorAction SilentlyContinue' | Add-Content -Path $profilePath -Force",
+      "Write-Host \"Added ImageHelpers import to: $profilePath\"",
+      "Write-Host 'Verifying module can be imported...'",
+      "Import-Module ImageHelpers -Force -ErrorAction Stop",
+      "Write-Host 'ImageHelpers module loaded successfully. Available functions:'",
+      "Get-Command -Module ImageHelpers | Select-Object -ExpandProperty Name | ForEach-Object { Write-Host \"  - $_\" }"
+    ]
+  }
+
+  # Phase 5b: Base configuration (minimal scripts)
+  # NOTE: ImageHelpers module is auto-imported via AllUsersAllHosts profile
+  provisioner "powershell" {
+    environment_vars = [
+      "IMAGE_VERSION=${var.image_version}",
+      "IMAGE_OS=${var.image_os}",
+      "AGENT_TOOLSDIRECTORY=${var.agent_tools_directory}",
+      "IMAGEDATA_FILE=${var.imagedata_file}",
+      "IMAGE_FOLDER=${var.image_folder}",
+      "TEMP_DIR=${var.temp_dir}"
+    ]
+    execution_policy = "unrestricted"
+    scripts = [
+      "${path.root}/../scripts/build/Configure-WindowsDefender.ps1",
+      "${path.root}/../scripts/build/Configure-PowerShell.ps1",
+      "${path.root}/../scripts/build/Install-PowerShellModules.ps1",
+      "${path.root}/../scripts/build/Install-WindowsFeatures.ps1",
+      "${path.root}/../scripts/build/Install-Chocolatey.ps1",
+      "${path.root}/../scripts/build/Configure-BaseImage.ps1",
+      "${path.root}/../scripts/build/Configure-ImageDataFile.ps1",
+      "${path.root}/../scripts/build/Configure-SystemEnvironment.ps1",
+      "${path.root}/../scripts/build/Configure-DotnetSecureChannel.ps1"
+    ]
+  }
+
+  # Phase 6: Restart for Windows features (Containers, Hyper-V)
+  provisioner "windows-restart" {
+    check_registry        = true
+    restart_check_command = "powershell -command \"& {while ( (Get-WindowsOptionalFeature -Online -FeatureName Containers -ErrorAction SilentlyContinue).State -ne 'Enabled' ) { Start-Sleep 30; Write-Output 'InProgress' }}\""
+    restart_timeout       = "10m"
+  }
+
+  # Disable wlansvc service (Wireless-Networking feature workaround)
+  provisioner "powershell" {
+    inline = [
+      "Set-Service -Name wlansvc -StartupType Manual",
+      "if ($(Get-Service -Name wlansvc).Status -eq 'Running') { Stop-Service -Name wlansvc}"
+    ]
+  }
+
+  # Phase 7: Install Docker and PowerShell Core
+  # NOTE: Docker Compose removed - not needed for BC containers (uses Docker directly)
+  provisioner "powershell" {
+    environment_vars = ["IMAGE_FOLDER=${var.image_folder}", "TEMP_DIR=${var.temp_dir}", "BC_GENERIC_IMAGE=${var.bc_generic_image}"]
+    scripts = [
+      "${path.root}/../scripts/build/Set-BcPolicy-ALGo.ps1",
+      "${path.root}/../scripts/build/Install-Docker-ALGo.ps1",
+      "${path.root}/../scripts/build/Install-DockerWinCred.ps1",
+      "${path.root}/../scripts/build/Install-PowershellCore.ps1"
+    ]
+  }
+
+  provisioner "windows-restart" {
+    restart_timeout = "30m"
+  }
+
+  # Phase 8: Essential tools only (skip VS, KubernetesTools, etc.)
+  provisioner "powershell" {
+    environment_vars = ["IMAGE_FOLDER=${var.image_folder}", "TEMP_DIR=${var.temp_dir}"]
+    scripts = [
+      "${path.root}/../scripts/build/Install-AzureCli.ps1",
+      "${path.root}/../scripts/build/Install-ChocolateyPackages-ALGo.ps1"
+    ]
+  }
+
+  provisioner "windows-restart" {
+    restart_timeout = "10m"
+  }
+
+  # Phase 9a: Azure PowerShell Az modules (Key Vault secrets, AzCopy auth, etc.)
+  # Installed in its own provisioner to isolate the long-running Save-Module
+  # download from the rest of Phase 9.
+  provisioner "powershell" {
+    environment_vars = ["IMAGE_FOLDER=${var.image_folder}", "TEMP_DIR=${var.temp_dir}"]
+    scripts = [
+      "${path.root}/../scripts/build/Install-PowershellAzModules.ps1"
+    ]
+  }
+
+  # Phase 9: Core tooling for AL-Go
+  provisioner "powershell" {
+    environment_vars = ["IMAGE_FOLDER=${var.image_folder}", "TEMP_DIR=${var.temp_dir}"]
+    scripts = [
+      "${path.root}/../scripts/build/Install-DotnetSDK.ps1",
+      "${path.root}/../scripts/build/Install-ActionsCache.ps1",
+      "${path.root}/../scripts/build/Install-Toolset.ps1",
+      "${path.root}/../scripts/build/Configure-Toolset.ps1",
+      "${path.root}/../scripts/build/Install-NodeJS.ps1",
+      "${path.root}/../scripts/build/Install-Git.ps1",
+      "${path.root}/../scripts/build/Install-GitHub-CLI.ps1",
+      "${path.root}/../scripts/build/Install-GitHubRunner.ps1",
+      "${path.root}/../scripts/build/Install-RunnerSetupScript.ps1",
+      "${path.root}/../scripts/build/Install-RootCA.ps1",
+      "${path.root}/../scripts/build/Configure-Diagnostics.ps1"
+    ]
+  }
+
+  # Phase 10: Windows Updates and final configuration
+  provisioner "powershell" {
+    elevated_password = "${var.install_password}"
+    elevated_user     = "${var.install_user}"
+    environment_vars  = ["IMAGE_FOLDER=${var.image_folder}", "TEMP_DIR=${var.temp_dir}"]
+    scripts = [
+      "${path.root}/../scripts/build/Install-WindowsUpdates-ALGo.ps1",
+      "${path.root}/../scripts/build/Configure-DynamicPort.ps1",
+      "${path.root}/../scripts/build/Configure-GDIProcessHandleQuota.ps1",
+      "${path.root}/../scripts/build/Configure-Shell.ps1",
+      "${path.root}/../scripts/build/Configure-DeveloperMode.ps1"
+    ]
+  }
+
+  provisioner "windows-restart" {
+    check_registry        = true
+    restart_check_command = "powershell -command \"& {if ((-not (Get-Process TiWorker.exe -ErrorAction SilentlyContinue)) -and (-not [System.Environment]::HasShutdownStarted) ) { Write-Output 'Restart complete' }}\""
+    restart_timeout       = "30m"
+  }
+
+  # Phase 11: Complete post-reboot update verification before the BC experiment.
+  # NOTE: Using Install-WindowsUpdatesAfterReboot-ALGo.ps1, which starts wuauserv
+  # before waiting; without it the post-reboot event 19 never lands (build 43877564118)
+  provisioner "powershell" {
+    pause_before     = "2m0s"
+    environment_vars = ["IMAGE_FOLDER=${var.image_folder}", "TEMP_DIR=${var.temp_dir}", "BC_CACHE_SKIP=${var.bc_cache_skip}"]
+    scripts = [
+      "${path.root}/../scripts/build/Install-WindowsUpdatesAfterReboot-ALGo.ps1"
+    ]
+  }
+
+  # Phase 11a: BC bake on the patched host (timing experiment; savings unproven).
+  # The generic toolset pull remains in Install-Docker-ALGo.ps1. Preserve BC inputs.
+  provisioner "powershell" {
+    environment_vars = [
+      "IMAGE_FOLDER=${var.image_folder}",
+      "TEMP_DIR=${var.temp_dir}",
+      "BC_COUNTRY=${var.bc_country}",
+      "BC_TYPE=${var.bc_type}",
+      "BC_SELECT=${var.bc_select}",
+      "BC_CACHE_SKIP=${var.bc_cache_skip}"
+    ]
+    scripts = [
+      "${path.root}/../scripts/build/Create-BcImage.ps1"
+    ]
+  }
+
+  # Phase 11b: Preserve the real smoke assertions and the kept bcsmoke container.
+  provisioner "powershell" {
+    environment_vars = [
+      "BC_CACHE_DIR=C:\\bcartifacts.cache",
+      "BC_CACHE_SKIP=${var.bc_cache_skip}"
+    ]
+    scripts = [
+      "${path.root}/../scripts/build/Smoke-BcContainer.ps1"
+    ]
+  }
+
+  # Phase 12: Cleanup and the full existing AL-Go suite. Cleanup removes TEMP
+  # and AllUsersAllHosts, so BC must finish first. Keep BC_CACHE_SKIP for tests.
+  provisioner "powershell" {
+    environment_vars = ["IMAGE_FOLDER=${var.image_folder}", "TEMP_DIR=${var.temp_dir}", "BC_CACHE_SKIP=${var.bc_cache_skip}"]
+    scripts = [
+      "${path.root}/../scripts/build/Invoke-Cleanup-ALGo.ps1",
+      "${path.root}/../scripts/tests/RunAll-ALGo-Tests.ps1"
+    ]
+  }
+
+  provisioner "powershell" {
+    inline = ["if (-not (Test-Path ${var.image_folder}\\tests\\testResults.xml)) { throw '${var.image_folder}\\tests\\testResults.xml not found' }"]
+  }
+
+  # Phase 13: Generate software report (using AL-Go minimal version)
+  # NOTE: Using Generate-SoftwareReport-ALGo.ps1 instead of Generate-SoftwareReport.ps1
+  # The full report generator expects tools like Go, Ruby, Python etc. that we don't install
+  provisioner "powershell" {
+    environment_vars = ["IMAGE_VERSION=${var.image_version}", "IMAGE_FOLDER=${var.image_folder}"]
+    inline           = ["pwsh -File '${var.image_folder}\\SoftwareReport\\Generate-SoftwareReport-ALGo.ps1'"]
+  }
+
+  provisioner "powershell" {
+    inline = [
+      "if (-not (Test-Path C:\\software-report.md)) { throw 'C:\\software-report.md not found' }",
+      "if (-not (Test-Path C:\\software-report.json)) { throw 'C:\\software-report.json not found' }"
+    ]
+  }
+
+  provisioner "file" {
+    destination = "${path.root}/../Windows2025-ALGo-Readme.md"
+    direction   = "download"
+    source      = "C:\\software-report.md"
+  }
+
+  provisioner "file" {
+    destination = "${path.root}/../software-report-algo.json"
+    direction   = "download"
+    source      = "C:\\software-report.json"
+  }
+
+  # Phase 14: Final system configuration
+  # NOTE: Using Configure-User-ALGo.ps1 instead of Configure-User.ps1
+  # The full Configure-User.ps1 requires Visual Studio (calls Get-VisualStudioInstance)
+  # AL-Go images don't include VS, so we use a minimal version that skips VS warmup
+  provisioner "powershell" {
+    environment_vars = ["INSTALL_USER=${var.install_user}"]
+    scripts = [
+      "${path.root}/../scripts/build/Install-NativeImages.ps1",
+      "${path.root}/../scripts/build/Configure-System.ps1",
+      "${path.root}/../scripts/build/Configure-User-ALGo.ps1",
+      "${path.root}/../scripts/build/Post-Build-Validation.ps1"
+    ]
+    skip_clean = true
+  }
+
+  provisioner "windows-restart" {
+    restart_timeout = "10m"
+  }
+
+  # Phase 15: Sysprep for generalization
+  # Verify preservation after the final reboot, before generalization/capture.
+  provisioner "powershell" {
+    environment_vars = ["BC_CACHE_SKIP=${var.bc_cache_skip}"]
+    scripts = ["${path.root}/../scripts/build/Test-BcPreservation-ALGo.ps1"]
+  }
+
+  provisioner "powershell" {
+    inline = [
+      "Compress-Archive -Path 'C:\\ProgramData\\BuildImageEvidence\\*' -DestinationPath 'C:\\ProgramData\\buildimage-evidence.zip' -Force -ErrorAction Stop"
+    ]
+  }
+
+  # Download while the build VM exists; workflow-log copies also survive its deletion.
+  provisioner "file" {
+    direction   = "download"
+    source      = "C:\\ProgramData\\buildimage-evidence.zip"
+    destination = "${path.root}/../buildimage-evidence.zip"
+  }
+
+  provisioner "powershell" {
+    scripts = ["${path.root}/../scripts/build/Invoke-Sysprep-ALGo.ps1"]
+  }
+
+  provisioner "file" {
+    direction   = "download"
+    source      = "C:\\ProgramData\\buildimage-evidence.zip"
+    destination = "${path.root}/../buildimage-evidence.zip"
+  }
+}

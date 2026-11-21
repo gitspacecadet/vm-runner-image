@@ -32,6 +32,7 @@ build {
   # Phase 1: Setup directories
   provisioner "powershell" {
     inline = [
+      "if ('${var.image_os}' -ne 'win22' -or ${local.os_disk_size_gb} -ne 256) { throw 'This prototype path requires win22 and a 256-GiB OS disk' }",
       "New-Item -Path ${var.image_folder} -ItemType Directory -Force",
       "New-Item -Path ${var.temp_dir} -ItemType Directory -Force"
     ]
@@ -194,9 +195,10 @@ build {
   # Phase 7: Install Docker and PowerShell Core
   # NOTE: Docker Compose removed - not needed for BC containers (uses Docker directly)
   provisioner "powershell" {
-    environment_vars = ["IMAGE_FOLDER=${var.image_folder}", "TEMP_DIR=${var.temp_dir}"]
+    environment_vars = ["IMAGE_FOLDER=${var.image_folder}", "TEMP_DIR=${var.temp_dir}", "BC_GENERIC_IMAGE=${var.bc_generic_image}"]
     scripts = [
-      "${path.root}/../scripts/build/Install-Docker.ps1",
+      "${path.root}/../scripts/build/Set-BcPolicy-ALGo.ps1",
+      "${path.root}/../scripts/build/Install-Docker-ALGo.ps1",
       "${path.root}/../scripts/build/Install-DockerWinCred.ps1",
       "${path.root}/../scripts/build/Install-PowershellCore.ps1"
     ]
@@ -253,7 +255,7 @@ build {
     elevated_user     = "${var.install_user}"
     environment_vars  = ["IMAGE_FOLDER=${var.image_folder}", "TEMP_DIR=${var.temp_dir}"]
     scripts = [
-      "${path.root}/../scripts/build/Install-WindowsUpdates.ps1",
+      "${path.root}/../scripts/build/Install-WindowsUpdates-ALGo.ps1",
       "${path.root}/../scripts/build/Configure-DynamicPort.ps1",
       "${path.root}/../scripts/build/Configure-GDIProcessHandleQuota.ps1",
       "${path.root}/../scripts/build/Configure-Shell.ps1",
@@ -279,7 +281,7 @@ build {
   }
 
   # Phase 11a: BC bake on the patched host (timing experiment; savings unproven).
-  # The generic toolset pull remains in Install-Docker.ps1. Preserve BC inputs.
+  # The generic toolset pull remains in Install-Docker-ALGo.ps1. Preserve BC inputs.
   provisioner "powershell" {
     environment_vars = [
       "IMAGE_FOLDER=${var.image_folder}",
@@ -310,7 +312,7 @@ build {
   provisioner "powershell" {
     environment_vars = ["IMAGE_FOLDER=${var.image_folder}", "TEMP_DIR=${var.temp_dir}", "BC_CACHE_SKIP=${var.bc_cache_skip}"]
     scripts = [
-      "${path.root}/../scripts/build/Invoke-Cleanup.ps1",
+      "${path.root}/../scripts/build/Invoke-Cleanup-ALGo.ps1",
       "${path.root}/../scripts/tests/RunAll-ALGo-Tests.ps1"
     ]
   }
@@ -386,10 +388,12 @@ build {
   }
 
   provisioner "powershell" {
-    inline = [
-      "if( Test-Path $env:SystemRoot\\System32\\Sysprep\\unattend.xml ){ rm $env:SystemRoot\\System32\\Sysprep\\unattend.xml -Force}",
-      "& $env:SystemRoot\\System32\\Sysprep\\Sysprep.exe /oobe /generalize /mode:vm /quiet /quit",
-      "while($true) { $imageState = Get-ItemProperty HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Setup\\State | Select ImageState; if($imageState.ImageState -ne 'IMAGE_STATE_GENERALIZE_RESEAL_TO_OOBE') { Write-Output $imageState.ImageState; Start-Sleep -s 10 } else { break } }"
-    ]
+    scripts = ["${path.root}/../scripts/build/Invoke-Sysprep-ALGo.ps1"]
+  }
+
+  provisioner "file" {
+    direction   = "download"
+    source      = "C:\\ProgramData\\buildimage-evidence.zip"
+    destination = "${path.root}/../buildimage-evidence.zip"
   }
 }

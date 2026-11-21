@@ -1,0 +1,73 @@
+{
+    "toolcache": [
+        {
+            "name": "node",
+            "url" : "https://raw.githubusercontent.com/actions/node-versions/main/versions-manifest.json",
+            "arch": "x64",
+            "platform" : "win32",
+            "versions": [
+                "22.*",
+                "24.*"
+            ]
+        }
+    ],
+    "powershellModules": [
+        { "name": "DockerMsftProvider" },
+        { "name": "MarkdownPS" },
+        { "name": "Pester", "versions": ["5.7.1"] },
+        { "name": "PowerShellGet", "versions": ["2.2.5"] },
+        { "name": "PSScriptAnalyzer" },
+        { "name": "PSWindowsUpdate" }
+    ],
+    "azureModules": [
+        {
+            "name": "az",
+            "versions": [
+                "12.5.0"
+            ],
+            "zip_versions": []
+        }
+    ],
+    "windowsFeatures": [
+        { "name": "Containers" },
+        { "name": "Microsoft-Windows-Subsystem-Linux", "optionalFeature": true },
+        { "name": "VirtualMachinePlatform", "optionalFeature": true },
+        { "name": "Hyper-V", "includeAllSubFeatures": true },
+        { "name": "Hyper-V-PowerShell" },
+        { "name": "Wireless-Networking" }
+    ],
+    "docker": {
+        "images": [
+            "mcr.microsoft.com/businesscentral@sha256:ca688c497bc9189a9936c39e24cbcc55626f495d9dc1978a49e03300953835d2"
+        ],
+        "components": {
+            "docker": "27.5.1"
+        }
+    },
+    "choco": {
+        "common_packages": [
+            { "name": "7zip.install" },
+            { "name": "jq" },
+            { "name": "NuGet.CommandLine" },
+            { "name": "dotnet" },
+            { "name": "vcredist140" }
+        ]
+    },
+    "dotnet": {
+        "versions": [
+            "9.0",
+            "10.0"
+        ],
+        "tools": [],
+        "warmup": false
+    },
+    "node": {
+        "default": "22.*"
+    },
+    "npm": {
+        "global_packages": []
+    },
+    "pwsh": {
+        "version": "7.6"
+    }
+}

@@ -1,7 +1,8 @@
 # Offline round-trip of the actual template commands; never invokes Packer/Azure.
+param([ValidateSet('2022','2025')][string] $Year = '2022')
 $ErrorActionPreference = 'Stop'
 $templateRoot = (Resolve-Path "$PSScriptRoot/../../images/windows/templates").Path
-$template = Get-Content -LiteralPath (Join-Path $templateRoot 'build.windows-2022-algo.pkr.hcl') -Raw
+$template = Get-Content -LiteralPath (Join-Path $templateRoot "build.windows-$Year-algo.pkr.hcl") -Raw
 $phase2 = ($template -split '# Phase 2:')[1] -split '# Phase 3:' | Select-Object -First 1
 $work = Join-Path ([IO.Path]::GetTempPath()) ('algo payload test ' + [guid]::NewGuid())
 $archive = Join-Path $work 'payload.tar'

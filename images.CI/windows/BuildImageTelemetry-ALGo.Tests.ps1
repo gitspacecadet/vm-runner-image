@@ -59,7 +59,7 @@ Describe 'BC final reboot preservation gate' {
         '{"enabled":true,"containerName":"bcsmoke","imageName":"my:example"}' |
             Set-Content "$script:cache/keep-container-marker.json"
         $global:BuildImageTestState = @{
-            Running = $true; Health = 'healthy'; Restart = 'unless-stopped'
+            Running = $true; Health = 'healthy'; Restart = 'unless-stopped'; Isolation = 'process'
             ContainerImage = 'sha256:baked'; Nst = '1'; Artifact = 'https://example.invalid/sandbox/1/us'
         }
         Mock Import-Module { }
@@ -71,7 +71,7 @@ Describe 'BC final reboot preservation gate' {
                 '{"Id":"sha256:baked","RepoTags":["my:example"],"RepoDigests":[],"OsVersion":"10.0.20348.1"}'
             } elseif ($args[0] -eq 'inspect') {
                 @{ Image = $global:BuildImageTestState.ContainerImage; State = @{ Running = $global:BuildImageTestState.Running; Health = @{ Status = $global:BuildImageTestState.Health } }
-                    HostConfig = @{ RestartPolicy = @{ Name = $global:BuildImageTestState.Restart } } } | ConvertTo-Json -Depth 5 -Compress
+                    HostConfig = @{ Isolation = $global:BuildImageTestState.Isolation; RestartPolicy = @{ Name = $global:BuildImageTestState.Restart } } } | ConvertTo-Json -Depth 5 -Compress
             } elseif ($args[0] -eq 'exec') { $global:BuildImageTestState.Nst }
             else { throw "Unexpected mutating Docker command: $($args -join ' ')" }
         }
@@ -105,11 +105,15 @@ Describe 'BC final reboot preservation gate' {
     }
     It 'rejects an image mismatch' {
         $global:BuildImageTestState.ContainerImage = 'sha256:other'
-        { & $script:gate -CacheDir $script:cache } | Should -Throw '*image or restart policy*'
+        { & $script:gate -CacheDir $script:cache } | Should -Throw '*image, isolation or restart policy*'
     }
     It 'rejects a changed restart policy' {
         $global:BuildImageTestState.Restart = 'no'
-        { & $script:gate -CacheDir $script:cache } | Should -Throw '*image or restart policy*'
+        { & $script:gate -CacheDir $script:cache } | Should -Throw '*image, isolation or restart policy*'
+    }
+    It 'rejects Hyper-V isolation on the retained container' {
+        $global:BuildImageTestState.Isolation = 'hyperv'
+        { & $script:gate -CacheDir $script:cache } | Should -Throw '*image, isolation or restart policy*'
     }
     It 'rejects a missing keep marker' {
         Remove-Item "$script:cache/keep-container-marker.json"

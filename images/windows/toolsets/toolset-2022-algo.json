@@ -38,7 +38,7 @@
     ],
     "docker": {
         "images": [
-            "mcr.microsoft.com/businesscentral:ltsc2022"
+            "mcr.microsoft.com/businesscentral@sha256:ca688c497bc9189a9936c39e24cbcc55626f495d9dc1978a49e03300953835d2"
         ],
         "components": {
             "docker": "27.5.1"

@@ -17,20 +17,20 @@ try {
         if (-not $marker.enabled -or $marker.containerName -ne 'bcsmoke' -or $marker.imageName -ne $metadata.dockerImage) {
             throw 'BC keep-container marker does not match the baked image/container'
         }
-        $identity = Get-BuildImageDockerIdentity -Image $metadata.dockerImage
         if ($metadata.dockerImage -notlike 'my:*') { throw 'Expected baked my: image' }
-        if ($identity.id -ne $metadata.dockerImageId) { throw 'Baked image identity changed after bake' }
         # Up to two minutes of readiness retries only when Docker/BC is not ready.
         # Existing fixed waits and Packer reboot structure are unchanged.
         Invoke-ScriptBlockWithRetry -RetryCount 24 -RetryIntervalSeconds 5 -Command {
+            $identity = Get-BuildImageDockerIdentity -Image $metadata.dockerImage
+            if ($identity.id -ne $metadata.dockerImageId) { throw 'Baked image identity changed after bake' }
             $raw = docker inspect bcsmoke --format '{{json .}}'
             if ($LASTEXITCODE -ne 0) { throw 'bcsmoke inspect failed' }
             $container = $raw | ConvertFrom-Json
             $health = 'none'
             if ($container.State.PSObject.Properties.Name -contains 'Health') { $health = $container.State.Health.Status }
             if (-not $container.State.Running -or $health -eq 'unhealthy') { throw 'bcsmoke is not running with acceptable health' }
-            if ($container.Image -ne $identity.id -or $container.HostConfig.RestartPolicy.Name -ne 'unless-stopped') {
-                throw 'bcsmoke image or restart policy changed'
+            if ($container.Image -ne $identity.id -or $container.HostConfig.Isolation -ne 'process' -or $container.HostConfig.RestartPolicy.Name -ne 'unless-stopped') {
+                throw 'bcsmoke image, isolation or restart policy changed'
             }
             $nst = (docker exec bcsmoke powershell -NoProfile -Command "(Get-Service -Name 'MicrosoftDynamicsNavServer*' | Where-Object Status -eq 'Running' | Measure-Object).Count" | Out-String).Trim()
             if ($LASTEXITCODE -ne 0 -or $nst -notmatch '^[1-9]\d*$') { throw 'BC service tier is not Running after final reboot' }
@@ -41,7 +41,7 @@ try {
             Write-BuildImageEvidence 'preservation-pass' @{
                 image = $metadata.dockerImage; imageId = $identity.id; container = 'bcsmoke'
                 running = $true; health = $health; serviceTierCount = [int]$nst
-                restartPolicy = 'unless-stopped'; keepMarker = $true
+                restartPolicy = 'unless-stopped'; keepMarker = $true; isolation = 'process'
                 artifact = ([Uri]$artifact).GetLeftPart([UriPartial]::Path)
             }
         }

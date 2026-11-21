@@ -149,6 +149,22 @@ if ($bcHelperModule) {
     $bcSection.AddToolVersion("BcContainerHelper", $bcHelperModule.Version.ToString())
 }
 
+# Prototype provenance. Do not serialize Docker Config/Env (contains secrets).
+$provenance = $installedSoftware.AddHeader("AL-Go image provenance")
+$hostInfo = Get-CimInstance Win32_OperatingSystem
+$ubr = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').UBR
+$provenance.AddToolVersion("Host OS", "$($hostInfo.Caption) $($hostInfo.Version).$ubr / $($hostInfo.OSArchitecture)")
+$policy = Get-Content 'C:\ProgramData\BcContainerHelper\BcContainerHelper.config.json' -Raw | ConvertFrom-Json
+$provenance.AddToolVersion("Generic digest", $policy.genericImageName)
+$provenance.AddToolVersion("Container isolation", $policy.defaultNewContainerParameters.isolation)
+$dockerServer = docker version --format '{{.Server.Version}}'
+if ($LASTEXITCODE -ne 0) { throw 'Docker server version unavailable for report' }
+$provenance.AddToolVersion("Docker server", "$dockerServer")
+if (Test-Path $bcMetadataFile) {
+    $provenance.AddToolVersion("Baked image ID", $bcMetadata.dockerImageId)
+    $provenance.AddToolVersion("Generic OS", $bcMetadata.genericOsVersion)
+}
+
 # Generate reports
 $softwareReport.ToJson() | Out-File -FilePath "C:\software-report.json" -Encoding UTF8NoBOM
 $softwareReport.ToMarkdown() | Out-File -FilePath "C:\software-report.md" -Encoding UTF8NoBOM

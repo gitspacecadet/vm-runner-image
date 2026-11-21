@@ -3,6 +3,16 @@
 # These extend variable.windows.pkr.hcl with BC-specific options
 ################################################################################
 
+variable "bc_generic_image" {
+  type        = string
+  default     = ""
+  description = "Prototype generic digest override; empty uses the matched LTSC2022 toolset digest"
+  validation {
+    condition     = var.bc_generic_image == "" || can(regex("^mcr\\.microsoft\\.com/businesscentral@sha256:[0-9a-f]{64}$", var.bc_generic_image))
+    error_message = "The prototype requires an immutable MCR Business Central digest."
+  }
+}
+
 variable "bc_country" {
   type        = string
   default     = "us"

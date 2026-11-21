@@ -137,6 +137,13 @@ Invoke-Section -Name 'Build BC Docker Image' -Action {
 	docker images $script:fullImageName
 	$script:bakedIdentity = Get-BuildImageDockerIdentity -Image $script:fullImageName
 	Write-BuildImageEvidence 'baked-image' $script:bakedIdentity
+	# New-BcImage can pull the tag again. Capture its resolved identity after
+	# the call too; a moving tag makes this an unmatched timing comparison.
+	$script:genericIdentityAfter = Get-BuildImageDockerIdentity -Image $genericImageName
+	Write-BuildImageEvidence 'generic-image-after-bake' $script:genericIdentityAfter
+	if ($script:genericIdentityAfter.id -ne $genericIdentity.id) {
+		Write-Warning '[BC CACHE] Generic image identity changed during bake; compare both digests and pull logs.'
+	}
 }
 
 Invoke-Section -Name 'Write metadata' -Action {
@@ -144,8 +151,9 @@ Invoke-Section -Name 'Write metadata' -Action {
 		timestampUtc = (Get-Date).ToUniversalTime().ToString('o')
 		hostOsVersion = $hostOsVersion
 		genericImage = $genericImageName
-		genericImageId = $genericIdentity.id
-		genericImageDigests = $genericIdentity.repoDigests
+		genericImageBeforeBakeId = $genericIdentity.id
+		genericImageId = $script:genericIdentityAfter.id
+		genericImageDigests = $script:genericIdentityAfter.repoDigests
 		bcContainerHelperVersion = (Get-Module BcContainerHelper).Version.ToString()
 		artifactUrl = $script:artifactUrl
 		country = $country

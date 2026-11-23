@@ -211,7 +211,7 @@ build {
     environment_vars = ["IMAGE_FOLDER=${var.image_folder}", "TEMP_DIR=${var.temp_dir}"]
     scripts = [
       "${path.root}/../scripts/build/Install-AzureCli.ps1",
-      "${path.root}/../scripts/build/Install-ChocolateyPackages-ALGo.ps1"
+      "${path.root}/../scripts/build/Install-ChocolateyPackages.ps1"
     ]
   }
 

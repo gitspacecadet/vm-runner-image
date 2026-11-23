@@ -29,11 +29,14 @@ build {
   sources = ["source.azure-arm.image"]
   name = "windows-2022-algo"
 
-  # Phase 1: Setup directories
+  # Phase 1: Setup directories, and log the build host's CPU and base OS build
+  # so build-time comparisons can pair runs by host generation and base image.
   provisioner "powershell" {
     inline = [
       "New-Item -Path ${var.image_folder} -ItemType Directory -Force",
-      "New-Item -Path ${var.temp_dir} -ItemType Directory -Force"
+      "New-Item -Path ${var.temp_dir} -ItemType Directory -Force",
+      "Get-CimInstance Win32_Processor | Select-Object Name, NumberOfCores, MaxClockSpeed | Format-List | Out-String | Write-Host",
+      "Write-Host ('Base OS build: ' + (Get-CimInstance Win32_OperatingSystem).Version + '.' + (Get-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion').UBR)"
     ]
   }
 
@@ -300,10 +303,11 @@ build {
   # This only tests tools included in the minimal AL-Go toolset
   # NOTE: Using Install-WindowsUpdatesAfterReboot-ALGo.ps1, which starts wuauserv
   # before waiting; without it the post-reboot event 19 never lands (build 43877564118)
+  # No pause_before: the restart above already waits for TiWorker to exit, and
+  # the -ALGo script sleeps 30 s then retries 10x120 s on running updates.
   # BC_CACHE_SKIP reaches the tests so BcCache.Tests.ps1 skips the bake-only
   # checks when the my: bake was opted out (bc_cache_skip=true).
   provisioner "powershell" {
-    pause_before     = "2m0s"
     environment_vars = ["IMAGE_FOLDER=${var.image_folder}", "TEMP_DIR=${var.temp_dir}", "BC_CACHE_SKIP=${var.bc_cache_skip}"]
     scripts = [
       "${path.root}/../scripts/build/Install-WindowsUpdatesAfterReboot-ALGo.ps1",

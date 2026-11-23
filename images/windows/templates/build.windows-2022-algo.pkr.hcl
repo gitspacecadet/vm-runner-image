@@ -29,11 +29,14 @@ build {
   sources = ["source.azure-arm.image"]
   name = "windows-2022-algo"
 
-  # Phase 1: Setup directories
+  # Phase 1: Setup directories, and log the build host's CPU and base OS build
+  # so build-time comparisons can pair runs by host generation and base image.
   provisioner "powershell" {
     inline = [
       "New-Item -Path ${var.image_folder} -ItemType Directory -Force",
-      "New-Item -Path ${var.temp_dir} -ItemType Directory -Force"
+      "New-Item -Path ${var.temp_dir} -ItemType Directory -Force",
+      "Get-CimInstance Win32_Processor | Select-Object Name, NumberOfCores, MaxClockSpeed | Format-List | Out-String | Write-Host",
+      "Write-Host ('Base OS build: ' + (Get-CimInstance Win32_OperatingSystem).Version + '.' + (Get-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion').UBR)"
     ]
   }
 

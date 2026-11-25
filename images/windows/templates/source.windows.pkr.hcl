@@ -14,10 +14,14 @@ source "azure-arm" "image" {
   build_key_vault_secret_name            = var.build_key_vault_secret_name
   build_resource_group_name              = var.build_resource_group_name
   communicator                           = "winrm"
-  image_publisher                        = split(":", local.source_image_marketplace_sku)[0]
-  image_offer                            = split(":", local.source_image_marketplace_sku)[1]
-  image_sku                              = split(":", local.source_image_marketplace_sku)[2]
-  image_version                          = var.source_image_version
+  # ALGo fork, build-time L13 (2026-11-25): with source_gallery_image_version set,
+  # the VM boots that version of the deploy's own gallery definition (the
+  # monthly base layer) instead of the marketplace image. azure-arm accepts one
+  # source kind only, so the marketplace fields are emptied in that case.
+  image_publisher                        = var.source_gallery_image_version == "" ? split(":", local.source_image_marketplace_sku)[0] : ""
+  image_offer                            = var.source_gallery_image_version == "" ? split(":", local.source_image_marketplace_sku)[1] : ""
+  image_sku                              = var.source_gallery_image_version == "" ? split(":", local.source_image_marketplace_sku)[2] : ""
+  image_version                          = var.source_gallery_image_version == "" ? var.source_image_version : ""
   location                               = var.location
   managed_image_name                     = var.managed_image_name
   managed_image_resource_group_name      = var.managed_image_resource_group_name
@@ -43,6 +47,17 @@ source "azure-arm" "image" {
   # the captured managed image. This keeps gallery write off the high-blast-radius runtime
   # identity (assumable by every CI job on the pool via IMDS).
   # See gh-vmss-img-runners FromVmImageAgent doc 15 (2026-06-14) for the RBAC rationale.
+
+  dynamic "shared_image_gallery" {
+    for_each = var.source_gallery_image_version == "" ? [] : [var.source_gallery_image_version]
+    content {
+      subscription   = var.subscription_id
+      resource_group = var.gallery_resource_group_name
+      gallery_name   = var.gallery_name
+      image_name     = var.gallery_image_name
+      image_version  = shared_image_gallery.value
+    }
+  }
 
   dynamic "azure_tag" {
     for_each = var.azure_tags

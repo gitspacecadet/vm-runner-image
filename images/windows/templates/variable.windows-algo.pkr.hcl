@@ -21,6 +21,12 @@ variable "bc_select" {
   description = "Business Central version selection (Latest, Current, etc.)"
 }
 
+variable "source_gallery_image_version" {
+  type        = string
+  default     = ""
+  description = "L13 thin build: gallery version (in gallery_name/gallery_image_name) of the base layer to boot. Empty = marketplace source (full build)."
+}
+
 variable "bc_cache_skip" {
   type        = string
   default     = "false"

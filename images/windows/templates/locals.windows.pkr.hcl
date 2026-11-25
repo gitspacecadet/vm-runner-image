@@ -5,7 +5,10 @@ locals {
             os_disk_size_gb = 256
       },
       "win22" = {
-            source_image_marketplace_sku = "MicrosoftWindowsServer:WindowsServer:2022-Datacenter"
+            # ALGo fork, build-time L1 (2026-11-25): the windowsserver2022 offer gets the
+            # monthly LCU 13+ days before WindowsServer (Nov: 20348.5873 vs 5773), which
+            # saves the in-guest LCU + DISM ResetBase (~20-25 min). Same Gen1/x64/no plan.
+            source_image_marketplace_sku = "MicrosoftWindowsServer:windowsserver2022:2022-Datacenter"
             os_disk_size_gb = 256
       },
       "win25" = {

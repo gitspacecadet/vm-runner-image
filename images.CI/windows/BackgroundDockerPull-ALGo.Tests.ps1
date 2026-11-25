@@ -74,6 +74,82 @@ Describe 'L12 scripts are PS 5.1 safe' {
     }
 }
 
+Describe 'Background pull behaviour (mocked)' {
+    BeforeAll {
+        # Stubs for image-only helpers and docker, so Mock has commands to replace.
+        function global:Get-ToolsetContent { }
+        function global:Test-IsWin25 { }
+        function global:Invoke-PesterTests { param($TestFile, $TestName) }
+        function global:docker { }
+    }
+    AfterAll {
+        Remove-Item Function:\global:Get-ToolsetContent, Function:\global:Test-IsWin25, Function:\global:Invoke-PesterTests, Function:\global:docker -ErrorAction SilentlyContinue
+        Remove-Item Env:\PULL_MODE, Env:\PULL_WORK_DIR, Env:\PULL_TIMEOUT_MIN -ErrorAction SilentlyContinue
+    }
+    BeforeEach {
+        $env:PULL_WORK_DIR = Join-Path ([IO.Path]::GetTempPath()) ('bgpull-' + [guid]::NewGuid())
+        $env:PULL_TIMEOUT_MIN = '45'
+        $global:BgPulled = @()
+        Mock Get-ToolsetContent { [pscustomobject]@{ docker = [pscustomobject]@{ images = @('mcr.microsoft.com/businesscentral:ltsc2022') } } }
+        Mock Test-IsWin25 { $false }
+        Mock Invoke-PesterTests { }
+        Mock Start-Sleep { }
+        Mock Unregister-ScheduledTask { }
+        Mock Stop-ScheduledTask { }
+        Mock docker {
+            if ($args[0] -eq 'pull') { $global:BgPulled += $args[1]; $global:LASTEXITCODE = 0; return }
+            if ($args[0] -eq 'images') { if ($global:BgPulled -contains $args[2]) { 'sha256:abc' } }
+        }
+    }
+    AfterEach {
+        Remove-Item -LiteralPath $env:PULL_WORK_DIR -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    It 'Wait falls back at once when the task is not running and wrote no exit file' {
+        $env:PULL_MODE = 'Wait'
+        Mock Get-ScheduledTask { [pscustomobject]@{ State = 'Ready' } }
+        & $pullPath
+        $global:BgPulled | Should -Be @('mcr.microsoft.com/businesscentral:ltsc2022')
+        Should -Invoke Start-Sleep -Times 0 -Exactly -ParameterFilter { $Seconds -eq 10 }   # no poll loop
+        Should -Invoke Invoke-PesterTests -Times 1 -Exactly -ParameterFilter { $TestName -eq 'DockerImages' }
+        Should -Invoke Unregister-ScheduledTask -Times 1 -Exactly
+        Test-Path $env:PULL_WORK_DIR | Should -BeFalse
+    }
+
+    It 'Wait does not re-pull when the task finished and the image is present' {
+        $env:PULL_MODE = 'Wait'
+        New-Item -ItemType Directory -Path $env:PULL_WORK_DIR | Out-Null
+        Set-Content -Path (Join-Path $env:PULL_WORK_DIR 'pull.exit') -Value 0
+        $global:BgPulled = @('mcr.microsoft.com/businesscentral:ltsc2022')
+        Mock Get-ScheduledTask { [pscustomobject]@{ State = 'Ready' } }
+        & $pullPath
+        $global:BgPulled.Count | Should -Be 1
+        Should -Invoke Invoke-PesterTests -Times 1 -Exactly
+        Test-Path $env:PULL_WORK_DIR | Should -BeFalse
+    }
+
+    It 'Wait throws when the fallback pull fails (never ships without the image)' {
+        $env:PULL_MODE = 'Wait'
+        Mock Get-ScheduledTask { $null }
+        Mock docker { if ($args[0] -eq 'pull') { $global:LASTEXITCODE = 1 } }
+        { & $pullPath } | Should -Throw '*Docker pull failed*'
+    }
+
+    It 'Start warns instead of failing the build when the task cannot be registered' {
+        $env:PULL_MODE = 'Start'
+        Mock Register-ScheduledTask { throw 'access denied' }
+        Mock Start-ScheduledTask { }
+        Mock Get-ScheduledTask { $null }
+        { & $pullPath 3>$null } | Should -Not -Throw
+        Should -Invoke Start-ScheduledTask -Times 0 -Exactly
+    }
+
+    It 'fails closed on an unknown PULL_MODE' {
+        $env:PULL_MODE = 'Bogus'
+        { & $pullPath } | Should -Throw '*Unknown PULL_MODE*'
+    }
+}
+
 Describe 'ALGo template wiring' {
     BeforeAll {
         $tpl = Get-Content -Raw -LiteralPath $templatePath

@@ -14,6 +14,7 @@
 $ErrorActionPreference = 'Stop'
 $taskName = 'ALGoBackgroundDockerPull'
 $workDir  = 'C:\Windows\Temp\algo-bg-docker-pull'
+if ($env:PULL_WORK_DIR) { $workDir = $env:PULL_WORK_DIR }   # tests only
 $listFile = Join-Path $workDir 'images.txt'
 $logFile  = Join-Path $workDir 'pull.log'
 $exitFile = Join-Path $workDir 'pull.exit'
@@ -31,7 +32,7 @@ function Get-PullImages {
 # the last non-zero docker exit code; Wait decides what to do with it.
 $workerText = @'
 $ErrorActionPreference = 'Continue'
-$dir = 'C:\Windows\Temp\algo-bg-docker-pull'
+$dir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $log = Join-Path $dir 'pull.log'
 $rc = 0
 foreach ($img in (Get-Content (Join-Path $dir 'images.txt'))) {
@@ -56,16 +57,23 @@ switch ($mode) {
         Set-Content -Path $listFile -Value $images -Encoding Ascii
         Set-Content -Path $worker -Value $workerText -Encoding Ascii
 
-        $action    = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$worker`""
-        $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
-        $settings  = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Hours 2) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-        Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Settings $settings -Force | Out-Null
-        Start-ScheduledTask -TaskName $taskName
-        Start-Sleep -Seconds 15
-        $state = (Get-ScheduledTask -TaskName $taskName).State
-        Write-Host ("[BG PULL] {0:u} started task {1} for {2}; state={3}" -f (Get-Date).ToUniversalTime(), $taskName, ($images -join ', '), $state)
-        if ($state -ne 'Running' -and -not (Test-Path $exitFile)) {
-            Write-Warning "[BG PULL] Task is not running (state=$state); Wait will pull synchronously"
+        # A pure optimisation must not fail the build: on any error, warn and
+        # leave the pull to Wait's synchronous fallback.
+        try {
+            $action    = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$worker`""
+            $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+            $settings  = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Hours 2) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+            Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Settings $settings -Force | Out-Null
+            Start-ScheduledTask -TaskName $taskName
+            Start-Sleep -Seconds 15
+            $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+            $state = if ($task) { $task.State } else { 'Missing' }
+            Write-Host ("[BG PULL] {0:u} started task {1} for {2}; state={3}" -f (Get-Date).ToUniversalTime(), $taskName, ($images -join ', '), $state)
+            if ("$state" -ne 'Running' -and -not (Test-Path $exitFile)) {
+                Write-Warning "[BG PULL] Task is not running (state=$state); Wait will pull synchronously"
+            }
+        } catch {
+            Write-Warning "[BG PULL] Could not start the background pull ($($_.Exception.Message)); Wait will pull synchronously"
         }
     }
     'Wait' {
@@ -76,7 +84,19 @@ switch ($mode) {
         }
         $t0 = Get-Date
         $deadline = $t0.AddMinutes($timeoutMin)
-        while (-not (Test-Path $exitFile) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 10 }
+        # Stop waiting as soon as the task is no longer running: the worker
+        # writes pull.exit before it exits, so "not running + no exit file"
+        # means it never started or died, and only the fallback can help.
+        while (-not (Test-Path $exitFile) -and (Get-Date) -lt $deadline) {
+            $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+            if (-not $task -or "$($task.State)" -ne 'Running') {
+                if (-not (Test-Path $exitFile)) {
+                    Write-Warning "[BG PULL] Task not running (state=$(if ($task) { $task.State } else { 'Missing' })) and no exit file"
+                }
+                break
+            }
+            Start-Sleep -Seconds 10
+        }
         $waited = [math]::Round(((Get-Date) - $t0).TotalMinutes, 1)
 
         if (Test-Path $logFile) {
@@ -86,11 +106,15 @@ switch ($mode) {
             $rc = (Get-Content -Path $exitFile | Select-Object -First 1).Trim()
             Write-Host "[BG PULL] Task finished with exit $rc; waited $waited min"
         } else {
-            Write-Warning "[BG PULL] Timed out after $timeoutMin min; stopping the task"
+            Write-Warning "[BG PULL] No exit file after $waited min; stopping the task"
             Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 5   # let a child docker.exe exit before the fallback
         }
         Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
 
+        # Native calls under Continue so docker stderr (e.g. credential-helper
+        # warnings) cannot raise NativeCommandError; the exit code decides.
+        $ErrorActionPreference = 'Continue'
         foreach ($img in $images) {
             if (-not (docker images -q $img)) {
                 Write-Warning "[BG PULL] FALLBACK: $img missing after the background pull; pulling synchronously"
@@ -98,6 +122,7 @@ switch ($mode) {
                 if ($LASTEXITCODE -ne 0) { throw "Docker pull failed with a non-zero exit code ($LASTEXITCODE)" }
             }
         }
+        $ErrorActionPreference = 'Stop'
         Remove-Item -Path $workDir -Recurse -Force -ErrorAction SilentlyContinue
         Invoke-PesterTests -TestFile "Docker" -TestName "DockerImages"
     }

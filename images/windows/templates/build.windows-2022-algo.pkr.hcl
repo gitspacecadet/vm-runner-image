@@ -199,7 +199,7 @@ build {
   provisioner "powershell" {
     environment_vars = ["IMAGE_FOLDER=${var.image_folder}", "TEMP_DIR=${var.temp_dir}"]
     scripts = [
-      "${path.root}/../scripts/build/Install-Docker.ps1",
+      "${path.root}/../scripts/build/Install-Docker-ALGo.ps1",
       "${path.root}/../scripts/build/Install-DockerWinCred.ps1",
       "${path.root}/../scripts/build/Install-PowershellCore.ps1"
     ]
@@ -220,6 +220,16 @@ build {
 
   provisioner "windows-restart" {
     restart_timeout = "10m"
+  }
+
+  # Phase 9-pre (L12): start the toolset docker.images pull (BC generic image,
+  # ~8 min) in a SYSTEM scheduled task so it overlaps Phase 9a/9. No restart
+  # may sit between this and the Wait before Phase 10.
+  provisioner "powershell" {
+    environment_vars = ["IMAGE_FOLDER=${var.image_folder}", "TEMP_DIR=${var.temp_dir}", "PULL_MODE=Start"]
+    scripts = [
+      "${path.root}/../scripts/build/Invoke-BackgroundDockerPull-ALGo.ps1"
+    ]
   }
 
   # Phase 9a: Azure PowerShell Az modules (Key Vault secrets, AzCopy auth, etc.)
@@ -247,6 +257,15 @@ build {
       "${path.root}/../scripts/build/Install-RunnerSetupScript.ps1",
       "${path.root}/../scripts/build/Install-RootCA.ps1",
       "${path.root}/../scripts/build/Configure-Diagnostics.ps1"
+    ]
+  }
+
+  # Phase 9-post (L12): wait for the background pull, pull anything missing
+  # synchronously, remove the task, run the DockerImages test.
+  provisioner "powershell" {
+    environment_vars = ["IMAGE_FOLDER=${var.image_folder}", "TEMP_DIR=${var.temp_dir}", "PULL_MODE=Wait"]
+    scripts = [
+      "${path.root}/../scripts/build/Invoke-BackgroundDockerPull-ALGo.ps1"
     ]
   }
 

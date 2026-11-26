@@ -33,6 +33,14 @@ build {
     ]
   }
 
+  # Phase 1b: refuse a base layer older than 35 days (monthly base cadence).
+  provisioner "powershell" {
+    environment_vars = ["BASE_VERSION=${var.source_gallery_image_version}", "MAX_AGE_DAYS=35"]
+    scripts = [
+      "${path.root}/../scripts/build/Test-BaseLayerAge-ALGo.ps1"
+    ]
+  }
+
   # Phase 2: payload (same archive as the full build), expanded into a staging folder.
   # local.algo_payload_archive is shared with build windows-2022-algo: CI always
   # runs exactly one build via -only=, never both in one packer invocation.

@@ -98,6 +98,57 @@ Describe 'L13 thin build' {
     }
 }
 
+Describe 'L13 base-age guard' {
+    BeforeAll {
+        $guard = Join-Path $repoRoot 'images\windows\scripts\build\Test-BaseLayerAge-ALGo.ps1'
+        function Invoke-Guard([string] $Version, [string] $Now, [string] $Max = '') {
+            $saved = @{ B = $env:BASE_VERSION; N = $env:ALGO_NOW_UTC; M = $env:MAX_AGE_DAYS }
+            try {
+                $env:BASE_VERSION = $Version; $env:ALGO_NOW_UTC = $Now; $env:MAX_AGE_DAYS = $Max
+                & $guard 6>$null
+            } finally { $env:BASE_VERSION = $saved.B; $env:ALGO_NOW_UTC = $saved.N; $env:MAX_AGE_DAYS = $saved.M }
+        }
+    }
+
+    It 'accepts the spike base the day it was built' {
+        { Invoke-Guard '1.20261126.0923' '2026-11-26T10:59Z' } | Should -Not -Throw
+    }
+
+    It 'accepts a base 35 days old and refuses one 36 days old' {
+        { Invoke-Guard '1.20261126.0923' '2026-12-31T09:23Z' } | Should -Not -Throw
+        { Invoke-Guard '1.20261126.0923' '2027-01-01T09:30Z' } | Should -Throw '*days old (limit 35)*'
+    }
+
+    It 'honours MAX_AGE_DAYS' {
+        { Invoke-Guard '1.20261126.0923' '2026-12-01T10:00Z' '3' } | Should -Throw '*limit 3*'
+    }
+
+    It 'fails closed on a version without a date stamp' {
+        { Invoke-Guard '' '2026-11-26T10:59Z' } | Should -Throw '*cannot prove its age*'
+        { Invoke-Guard 'latest' '2026-11-26T10:59Z' } | Should -Throw '*cannot prove its age*'
+        { Invoke-Guard '1.2.3' '2026-11-26T10:59Z' } | Should -Throw '*cannot prove its age*'
+    }
+
+    It 'refuses a base dated in the future' {
+        { Invoke-Guard '1.20261226.0923' '2026-11-26T10:59Z' } | Should -Throw '*future*'
+    }
+
+    It 'runs in the thin build before the payload and the bake, with the 35-day limit' {
+        $iGuard = $thin.IndexOf('Test-BaseLayerAge-ALGo.ps1')
+        $iGuard | Should -BeGreaterThan 0
+        $iGuard | Should -BeLessThan $thin.IndexOf('Pack-ImagePayload-ALGo.ps1')
+        $thin | Should -Match '"BASE_VERSION=\$\{var\.source_gallery_image_version\}", "MAX_AGE_DAYS=35"'
+    }
+
+    It 'is ASCII-only and parses' {
+        $bytes = [IO.File]::ReadAllBytes($guard)
+        @($bytes | Where-Object { $_ -gt 127 }).Count | Should -Be 0
+        $errs = $null
+        [void][Management.Automation.Language.Parser]::ParseFile($guard, [ref]$null, [ref]$errs)
+        @($errs).Count | Should -Be 0
+    }
+}
+
 Describe 'L13 base layer tests (bc_cache_skip=true)' {
     # Base build 45781514526 failed: the BcContainerHelper checks ran although
     # Create-BcImage.ps1 returns before installing it on BC_CACHE_SKIP.

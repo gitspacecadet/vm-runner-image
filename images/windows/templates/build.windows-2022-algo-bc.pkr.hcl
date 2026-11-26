@@ -19,7 +19,7 @@
 
 build {
   sources = ["source.azure-arm.image"]
-  name    = "windows-2022-algo-bc"
+  name    = "windows-2022-algo"
 
   # Phase 1: log host CPU, base OS build and the base layer this build boots.
   provisioner "powershell" {

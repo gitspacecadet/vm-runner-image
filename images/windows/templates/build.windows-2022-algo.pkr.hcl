@@ -27,7 +27,7 @@ locals {
 
 build {
   sources = ["source.azure-arm.image"]
-  name = "windows-2022-algo"
+  name = "windows-2022-algo-full"
 
   # Phase 1: Setup directories, and log the build host's CPU and base OS build
   # so build-time comparisons can pair runs by host generation and base image.

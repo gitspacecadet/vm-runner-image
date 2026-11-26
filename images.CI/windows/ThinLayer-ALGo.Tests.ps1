@@ -29,9 +29,9 @@ BeforeAll {
 }
 
 Describe 'L13 source switch' {
-    It 'declares source_gallery_image_version with an empty default' {
+    It 'declares source_gallery_image_version pinned to the spike base layer (SPIKE ONLY)' {
         $v = Get-Content -LiteralPath $varPath -Raw
-        $v | Should -Match '(?s)variable "source_gallery_image_version" \{\s*type\s*=\s*string\s*default\s*=\s*""'
+        $v | Should -Match '(?s)variable "source_gallery_image_version" \{[^}]*?default\s*=\s*"1\.20261126\.0923"'
     }
 
     It 'keeps the marketplace fields only when no gallery version is set' {
@@ -55,7 +55,7 @@ Describe 'L13 thin build' {
             [regex]::Matches((Get-Content -LiteralPath $f.FullName -Raw), '(?m)^\s*name\s*=\s*"([^"]+)"') | ForEach-Object { $_.Groups[1].Value }
         }
         @($names | Where-Object { $_ -eq 'windows-2022-algo' }).Count | Should -Be 1 -Because 'the workflow builds -only=windows-2022-algo.azure-arm.image'
-        $names | Should -Contain 'windows-2022-algo-bc'
+        $names | Should -Contain 'windows-2022-algo-full'  # SPIKE ONLY: thin build takes the -only name
         @($names).Count | Should -Be 2
     }
 

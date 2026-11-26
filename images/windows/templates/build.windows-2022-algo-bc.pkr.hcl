@@ -34,6 +34,8 @@ build {
   }
 
   # Phase 2: payload (same archive as the full build), expanded into a staging folder.
+  # local.algo_payload_archive is shared with build windows-2022-algo: CI always
+  # runs exactly one build via -only=, never both in one packer invocation.
   provisioner "shell-local" {
     execute_command    = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "{{.Script}}"]
     tempfile_extension = ".ps1"

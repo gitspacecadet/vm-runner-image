@@ -4,9 +4,11 @@
 #
 # BC_CACHE_SKIP=true (Packer var bc_cache_skip) opts out of the my: bake and
 # the smoke container, so the cache dir, metadata and my: image never exist.
-# Those checks are skipped in that case. The generic BC image (toolset
-# docker.images) and BcContainerHelper are installed either way, so their
-# checks always run. Truthy values match Create-BcImage.ps1 /
+# Those checks are skipped in that case, and so is BcContainerHelper:
+# Create-BcImage.ps1 installs it only when it bakes (it returns before the
+# install on BC_CACHE_SKIP), so an L13 base layer has none and the thin
+# build's bake installs the latest one. The generic BC image (toolset
+# docker.images) is pulled either way, so its checks always run. Truthy values match Create-BcImage.ps1 /
 # Smoke-BcContainer.ps1 exactly.
 ################################################################################
 
@@ -62,7 +64,7 @@ Describe "Business Central Cache" {
         }
     }
 
-    Context "BcContainerHelper Module" {
+    Context "BcContainerHelper Module" -Skip:$bcCacheSkip {
         It "BcContainerHelper module is installed" {
             Get-Module -ListAvailable -Name BcContainerHelper | Should -Not -BeNullOrEmpty
         }

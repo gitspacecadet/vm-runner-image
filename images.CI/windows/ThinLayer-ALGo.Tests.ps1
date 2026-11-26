@@ -98,6 +98,30 @@ Describe 'L13 thin build' {
     }
 }
 
+Describe 'L13 base layer tests (bc_cache_skip=true)' {
+    # Base build 45781514526 failed: the BcContainerHelper checks ran although
+    # Create-BcImage.ps1 returns before installing it on BC_CACHE_SKIP.
+    It 'skips every bake-dependent BcCache check; only generic-image checks run' {
+        $bcTests = Join-Path $repoRoot 'images\windows\scripts\tests\BcCache.Tests.ps1'
+        $saved = $env:BC_CACHE_SKIP
+        try {
+            $env:BC_CACHE_SKIP = 'true'
+            $cfg = New-PesterConfiguration
+            $cfg.Run.Path = $bcTests
+            $cfg.Run.SkipRun = $true
+            $cfg.Run.PassThru = $true
+            $cfg.Output.Verbosity = 'None'
+            $found = Invoke-Pester -Configuration $cfg
+        } finally { $env:BC_CACHE_SKIP = $saved }
+        $all = @($found.Tests)
+        $all.Count | Should -BeGreaterThan 0
+        $run = @($all | Where-Object { -not $_.Skip } | ForEach-Object { $_.ExpandedPath })
+        $run | Should -Not -BeNullOrEmpty -Because 'the generic BC image checks must still run on the base'
+        $run | Where-Object { $_ -notmatch 'generic' } | Should -BeNullOrEmpty -Because 'only generic-image checks may run without the bake'
+        @($all | Where-Object { $_.ExpandedPath -match 'BcContainerHelper' -and -not $_.Skip }).Count | Should -Be 0
+    }
+}
+
 Describe 'L13 file hygiene' {
     It '<Name> is ASCII-only with balanced braces' -ForEach @(
         @{ Name = 'build.windows-2022-algo-bc.pkr.hcl' },
